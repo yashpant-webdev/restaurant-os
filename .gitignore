@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.pgdata*/
+coverage/
+
+# compiled output must only live in dist/
+**/src/**/*.js
+**/src/**/*.js.map
+**/src/**/*.d.ts

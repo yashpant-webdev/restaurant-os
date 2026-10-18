@@ -1,0 +1,2 @@
+{ "name": "@ros/contracts", "version": "0.1.0", "private": true, "main": "dist/index.js", "types": "dist/index.d.ts",
+  "dependencies": { "zod": "^3.24.1" } }

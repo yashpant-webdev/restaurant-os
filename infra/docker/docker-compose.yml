@@ -1,0 +1,43 @@
+# Local infrastructure. Requires Docker Desktop or OrbStack.
+#   docker compose -f infra/docker/docker-compose.yml up -d
+# Images are pinned to exact versions; all services bind to localhost only.
+name: restaurant-os
+services:
+  postgres:
+    image: postgres:17.6
+    environment:
+      POSTGRES_PASSWORD: postgres   # local only; production uses CloudNativePG-managed secrets
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD", "pg_isready", "-U", "postgres"], interval: 5s, retries: 10 }
+
+  redpanda:
+    image: redpandadata/redpanda:v24.3.18
+    command:
+      - redpanda start --mode dev-container --smp 1 --memory 1G
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+    ports: ["127.0.0.1:19092:19092"]
+    healthcheck: { test: ["CMD", "rpk", "cluster", "health", "--exit-when-healthy"], interval: 5s, retries: 20 }
+
+  redpanda-console:
+    image: redpandadata/console:v2.8.10
+    environment: { KAFKA_BROKERS: redpanda:9092 }
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on: [redpanda]
+
+  redis:
+    image: redis:7.4.5
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["127.0.0.1:6379:6379"]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1.5
+    command: ["start-dev"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin   # local only
+    ports: ["127.0.0.1:8081:8080"]
+
+volumes:
+  pgdata:

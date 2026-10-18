@@ -1,0 +1,7 @@
+-- Pattern every service migration follows for tenant-owned tables:
+--   ALTER TABLE t ENABLE ROW LEVEL SECURITY;
+--   ALTER TABLE t FORCE ROW LEVEL SECURITY;
+--   CREATE POLICY tenant_isolation ON t
+--     USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+--     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+-- When app.tenant_id is not set the comparison is NULL, so NO rows are visible (deny by default).
