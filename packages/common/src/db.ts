@@ -37,6 +37,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export class Database {
   readonly pool: Pool;
   private readonly log: Logger;
+  private closing = false;
 
   constructor(opts: DatabaseOptions) {
     this.log = opts.logger;
@@ -50,8 +51,17 @@ export class Database {
       query_timeout: (opts.statementTimeoutMs ?? 5_000) + 1_000,
     });
     // Without this listener, an idle client losing its connection emits an
-    // unhandled 'error' event and kills the process.
-    this.pool.on('error', (err) => this.log.error({ err }, 'idle postgres client error'));
+    // unhandled 'error' event and kills the process. The pool replaces the
+    // broken client on the next query, so this is not fatal.
+    this.pool.on('error', (err) => {
+      const code = (err as { code?: string }).code;
+      if (this.closing || code === '57P01' || code === '57P02' || code === '57P03') {
+        // Database shutting down or restarting (e.g. Ctrl+C, failover): expected, not an incident.
+        this.log.info({ code }, 'database connection closed by server');
+      } else {
+        this.log.error({ err }, 'idle postgres client error');
+      }
+    });
   }
 
   async query<R extends QueryResultRow = QueryResultRow>(sql: string, params: unknown[] = []): Promise<R[]> {
@@ -102,6 +112,7 @@ export class Database {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
     await this.pool.end();
   }
 }

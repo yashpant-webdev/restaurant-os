@@ -1,6 +1,7 @@
 import { formatInr, percentOf, roundToRupee, safeAdd, splitGst } from './money';
 import { CircuitBreaker } from './http';
 import { UpstreamError } from './errors';
+import { serializeError } from './logger';
 import { financialYear } from '../../../services/order-pos/src/orders.service';
 
 describe('money', () => {
@@ -48,5 +49,15 @@ describe('circuit breaker', () => {
     let called = false;
     await expect(cb.exec(async () => (called = true))).rejects.toBeInstanceOf(UpstreamError);
     expect(called).toBe(false);
+  });
+});
+
+describe('error logging', () => {
+  it('keeps message/code/stack and drops attached library objects', () => {
+    const err = Object.assign(new Error('terminating connection'), { code: '57P01', client: { connectionParameters: { user: 'x', password: 'secret' } } });
+    const out = serializeError(err);
+    expect(out).toMatchObject({ type: 'Error', message: 'terminating connection', code: '57P01' });
+    expect(JSON.stringify(out)).not.toContain('secret');
+    expect(out).not.toHaveProperty('client');
   });
 });
