@@ -2,6 +2,8 @@
 
 A restaurant POS and management SaaS (Petpooja-style). It is built as microservices, and payment correctness is the top priority.
 
+The full product and architecture plan (modules, USPs, roadmap) is in [docs/PLAN.md](docs/PLAN.md).
+
 ## Tech stack
 
 | Layer | Choice |
