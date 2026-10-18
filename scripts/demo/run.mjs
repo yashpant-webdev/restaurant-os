@@ -5,6 +5,7 @@
 // instead of the fake gateway, Keycloak instead of demo tokens.
 import EmbeddedPostgres from 'embedded-postgres';
 import { createServer } from 'node:http';
+import { createServer as createTcpServer } from 'node:net';
 import { createRequire } from 'node:module';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -51,7 +52,25 @@ async function serviceDb(svc, migrationsDir) {
 const token = (roles, sub) =>
   common.signDevToken(JWT.secret, { sub, tid: TENANT, outlets: [OUTLET], roles }, { issuer: JWT.issuer, audience: JWT.audience, expiresIn: '12h' });
 
+/** Resolves true if nothing is listening on the port yet. */
+function portFree(port) {
+  return new Promise((resolve) => {
+    const srv = createTcpServer();
+    srv.once('error', () => resolve(false));
+    srv.once('listening', () => srv.close(() => resolve(true)));
+    srv.listen(port);
+  });
+}
+
 async function main() {
+  const busy = [];
+  for (const port of [PG_PORT, PORTS.ui, PORTS.order, PORTS.payment]) if (!(await portFree(port))) busy.push(port);
+  if (busy.length) {
+    console.error(`\nPort ${busy.join(', ')} already in use: another demo is probably still running.`);
+    console.error('Stop it with Ctrl+C in the terminal where it runs, or find it with:');
+    console.error(`  lsof -nP -iTCP:${busy[0]} -sTCP:LISTEN\n`);
+    process.exit(1);
+  }
   console.log('Starting PostgreSQL...');
   await pg.initialise();
   await pg.start();
@@ -189,7 +208,7 @@ async function main() {
 }
 
 main().catch(async (err) => {
-  console.error('Demo failed to start:', err);
+  console.error('Demo failed to start:', err instanceof Error ? err.message : (err ?? 'unknown error (check that ports 4000-4002 and 54330 are free)'));
   await pg.stop().catch(() => {});
   process.exit(1);
 });
