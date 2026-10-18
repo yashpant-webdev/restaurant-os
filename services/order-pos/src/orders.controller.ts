@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Headers, HttpCode, Inject, Param, ParseUUIDPipe, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { CurrentPrincipal, Database, Principal, Public, Roles, ZodPipe } from '@ros/common';
-import { AddItemsInput, APP_DB, CheckoutInput, CreateMenuItemInput, CreateOrderInput, CreateTableInput, OrdersService } from './orders.service';
+import { AddItemsInput, AttachCustomerInput, APP_DB, CheckoutInput, CreateMenuItemInput, CreateOrderInput, CreateTableInput, OrdersService } from './orders.service';
 
 @Controller()
 export class OrdersController {
@@ -38,6 +38,13 @@ export class OrdersController {
   @Roles('owner', 'manager', 'cashier', 'captain')
   addItems(@CurrentPrincipal() p: Principal, @Param('id', new ParseUUIDPipe()) id: string, @Body(new ZodPipe(AddItemsInput)) body: typeof AddItemsInput._type) {
     return this.orders.addItems(p, id, body);
+  }
+
+  @Post('orders/:id/customer')
+  @HttpCode(200)
+  @Roles('owner', 'manager', 'cashier', 'captain')
+  attachCustomer(@CurrentPrincipal() p: Principal, @Param('id', new ParseUUIDPipe()) id: string, @Body(new ZodPipe(AttachCustomerInput)) body: typeof AttachCustomerInput._type) {
+    return this.orders.attachCustomer(p, id, body);
   }
 
   @Post('orders/:id/request-bill')

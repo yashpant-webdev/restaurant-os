@@ -67,6 +67,26 @@ export const OrderSettled = z.object({
   paidPaise: Paise,
   payments: z.array(z.object({ paymentId: z.string().uuid(), method: PaymentMethod, netPaise: Paise })),
   settledAt: z.string().datetime(),
+  // v1 additions (optional, so older producers stay valid): what analytics and CRM need.
+  channel: z.enum(['DINE_IN', 'TAKEAWAY', 'DELIVERY']).optional(),
+  tableRef: z.string().nullable().optional(),
+  guests: z.number().int().positive().nullable().optional(),
+  openedAt: z.string().datetime().optional(),
+  createdBy: z.string().optional(),
+  customer: z.object({ phone: z.string().regex(/^[6-9][0-9]{9}$/), name: z.string().nullable(), marketingConsent: z.boolean() }).nullable().optional(),
+  lines: z
+    .array(
+      z.object({
+        itemId: z.string().uuid(),
+        name: z.string(),
+        quantity: z.number().int().positive(),
+        gstRateBp: z.number().int().nonnegative(),
+        netPaise: Paise,
+        taxPaise: Paise,
+        costPaise: Paise.nullable(),
+      }),
+    )
+    .optional(),
 });
 
 export const OrderOverpaid = z.object({

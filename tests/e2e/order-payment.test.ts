@@ -8,6 +8,7 @@ import { FakeGateway } from '../../services/payment/src/gateway/fake';
 import { OrderModule, registerPaymentConsumers } from '../../services/order-pos/src/app.module';
 import { OrdersService } from '../../services/order-pos/src/orders.service';
 import { DevServiceTokenProvider, PaymentClient } from '../../services/order-pos/src/payment-client';
+import { registerProjections } from '../../services/analytics/src/projections';
 
 /**
  * Both services run for real (HTTP, separate databases with RLS, outbox →
@@ -21,6 +22,7 @@ let bus: InMemoryEventBus;
 let gateway: FakeGateway;
 let pay: { app: INestApplication; url: string; appDb: Database; workerDb: Database; relay: OutboxRelay };
 let ord: { app: INestApplication; url: string; appDb: Database; workerDb: Database; relay: OutboxRelay };
+let analytics: { appDb: Database; workerDb: Database };
 let settled: EventEnvelope[];
 let overpaid: EventEnvelope[];
 let kots: EventEnvelope[] = [];
@@ -52,6 +54,9 @@ beforeAll(async () => {
   await registerPaymentConsumers(bus, odb.appDb, log, oapp.app.get(OrdersService));
   ord = { ...oapp, ...odb, relay: orelay };
 
+  analytics = await freshServiceDb('analytics');
+  await registerProjections(bus, analytics.appDb, log);
+
   prelay.start();
   orelay.start();
 
@@ -62,6 +67,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await analytics?.appDb.close();
+  await analytics?.workerDb.close();
   for (const s of [ord, pay].filter(Boolean)) {
     await s.app.close();
     await s.relay.stop();
@@ -230,6 +237,11 @@ describe('dine-in table flow: captain → kitchen → cashier', () => {
     const kds = (await call(ord.url, 'GET', `/kots?outletId=${OUTLET}`, { token: cashier })).body;
     expect(kds.filter((k: { orderId: string }) => k.orderId === orderId).map((k: { kotNo: number }) => k.kotNo).sort()).toEqual([1, 2]);
 
+    // Guest shares their number for the WhatsApp bill and loyalty.
+    const withCustomer = await call(ord.url, 'POST', `/orders/${orderId}/customer`, { token: captain, body: { phone: '9123456780', name: 'Arjun', marketingConsent: true } });
+    expect(withCustomer.body.customer).toMatchObject({ phone: '9123456780' });
+    expect((await call(ord.url, 'POST', `/orders/${orderId}/customer`, { token: captain, body: { phone: '12345' } })).status).toBe(400);
+
     // Captain asks for the bill.
     await call(ord.url, 'POST', `/orders/${orderId}/request-bill`, { token: captain });
     expect((await table('T1')).status).toBe('BILL_REQUESTED');
@@ -247,6 +259,13 @@ describe('dine-in table flow: captain → kitchen → cashier', () => {
     const after = await floor();
     expect(after.summary.settledTodayCount).toBe(before + 1);
     expect((await getOrder(orderId)).invoiceNo).toMatch(/^\d{4}\/\d{6}$/);
+
+    // The sale reaches the analytics read model through events: lines, cost and the customer.
+    await waitFor(async () => (await analytics.workerDb.query('SELECT 1 FROM fact_orders WHERE order_id = $1', [orderId])).length === 1);
+    const lines = await analytics.workerDb.query('SELECT name, quantity, net_paise FROM fact_order_lines WHERE order_id = $1 ORDER BY line_no', [orderId]);
+    expect(lines).toEqual([{ name: 'Chicken Biryani', quantity: 2, net_paise: 59_800 }, { name: 'Sweet Lassi', quantity: 2, net_paise: 17_900 }]);
+    const [guest] = await analytics.workerDb.query('SELECT visits, spend_paise FROM customers WHERE phone = $1', ['9123456780']);
+    expect(guest).toEqual({ visits: 1, spend_paise: 81_600 });
 
     // The table can be opened again for the next guests.
     t1 = await call(ord.url, 'POST', '/orders', {
@@ -268,4 +287,5 @@ describe('dine-in table flow: captain → kitchen → cashier', () => {
 it('no event was dead-lettered during the run', async () => {
   await bus.waitForIdle();
   expect(await ord.workerDb.query('SELECT * FROM dead_letters')).toHaveLength(0);
+  expect(await analytics.workerDb.query('SELECT * FROM dead_letters')).toHaveLength(0);
 });

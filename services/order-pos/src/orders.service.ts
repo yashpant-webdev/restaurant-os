@@ -35,6 +35,17 @@ export const CreateMenuItemInput = z
     name: z.string().trim().min(1).max(120),
     pricePaise: z.number().int().min(0).max(10_000_000),
     gstRateBp: z.union([z.literal(0), z.literal(500), z.literal(1200), z.literal(1800), z.literal(2800)]),
+    /** Recipe (food) cost per portion, for menu engineering and P&L. */
+    costPaise: z.number().int().min(0).max(10_000_000).optional(),
+    category: z.string().trim().min(1).max(40).optional(),
+  })
+  .strict();
+
+export const AttachCustomerInput = z
+  .object({
+    phone: z.string().regex(/^[6-9][0-9]{9}$/, 'must be a 10-digit Indian mobile number'),
+    name: z.string().trim().min(1).max(80).optional(),
+    marketingConsent: z.boolean().default(false),
   })
   .strict();
 
@@ -97,11 +108,15 @@ interface OrderRow {
   guests: number | null;
   kot_count: number;
   bill_requested_at: Date | null;
+  customer_phone: string | null;
+  customer_name: string | null;
+  marketing_consent: boolean;
+  created_by: string;
   created_at: Date;
   settled_at: Date | null;
 }
 
-type PricedLine = { itemId: string; quantity: number; item: { name: string; price_paise: number; gst_rate_bp: number }; lineSubtotal: number; lineTax: number };
+type PricedLine = { itemId: string; quantity: number; item: { name: string; price_paise: number; gst_rate_bp: number; cost_paise: number | null }; lineSubtotal: number; lineTax: number };
 
 interface OrderPaymentRow {
   payment_id: string;
@@ -141,8 +156,8 @@ export class OrdersService {
     const id = newId();
     await this.db.tx(
       (tx) =>
-        tx.query(`INSERT INTO menu_items (id, tenant_id, outlet_id, name, price_paise, gst_rate_bp) VALUES ($1, $2, $3, $4, $5, $6)`, [
-          id, p.tenantId, input.outletId, input.name, input.pricePaise, input.gstRateBp,
+        tx.query(`INSERT INTO menu_items (id, tenant_id, outlet_id, name, price_paise, gst_rate_bp, cost_paise, category) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, [
+          id, p.tenantId, input.outletId, input.name, input.pricePaise, input.gstRateBp, input.costPaise ?? null, input.category ?? null,
         ]),
       { tenantId: p.tenantId },
     );
@@ -239,10 +254,26 @@ export class OrdersService {
     return this.getOrder(p, orderId);
   }
 
+  /** Captain or cashier records the guest's mobile number (for the bill on WhatsApp, loyalty and CRM). */
+  async attachCustomer(p: Principal, orderId: string, input: z.infer<typeof AttachCustomerInput>) {
+    await this.db.tx(
+      async (tx) => {
+        const order = await this.lockOrder(tx, orderId);
+        assertOutletAccess(p, order.outlet_id);
+        if (order.status !== 'OPEN') throw new ConflictError('ORDER_NOT_OPEN', `Order is ${order.status}`);
+        await tx.query('UPDATE orders SET customer_phone = $2, customer_name = $3, marketing_consent = $4, updated_at = now() WHERE id = $1', [
+          orderId, input.phone, input.name ?? null, input.marketingConsent,
+        ]);
+      },
+      { tenantId: p.tenantId },
+    );
+    return this.getOrder(p, orderId);
+  }
+
   private async priceLines(tx: Tx, outletId: string, lines: { itemId: string; quantity: number }[]): Promise<PricedLine[]> {
     const ids = [...new Set(lines.map((l) => l.itemId))];
-    const { rows: items } = await tx.query<{ id: string; name: string; price_paise: number; gst_rate_bp: number }>(
-      `SELECT id, name, price_paise, gst_rate_bp FROM menu_items WHERE id = ANY($1::uuid[]) AND outlet_id = $2 AND is_active`,
+    const { rows: items } = await tx.query<{ id: string; name: string; price_paise: number; gst_rate_bp: number; cost_paise: number | null }>(
+      `SELECT id, name, price_paise, gst_rate_bp, cost_paise FROM menu_items WHERE id = ANY($1::uuid[]) AND outlet_id = $2 AND is_active`,
       [ids, outletId],
     );
     const byId = new Map(items.map((i) => [i.id, i]));
@@ -261,9 +292,9 @@ export class OrdersService {
     ]);
     for (const l of lines) {
       await tx.query(
-        `INSERT INTO order_lines (id, tenant_id, order_id, item_id, name, unit_price_paise, quantity, gst_rate_bp, line_subtotal_paise, line_tax_paise, kot_no)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-        [newId(), p.tenantId, order.id, l.itemId, l.item.name, l.item.price_paise, l.quantity, l.item.gst_rate_bp, l.lineSubtotal, l.lineTax, kotNo],
+        `INSERT INTO order_lines (id, tenant_id, order_id, item_id, name, unit_price_paise, quantity, gst_rate_bp, line_subtotal_paise, line_tax_paise, kot_no, unit_cost_paise)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [newId(), p.tenantId, order.id, l.itemId, l.item.name, l.item.price_paise, l.quantity, l.item.gst_rate_bp, l.lineSubtotal, l.lineTax, kotNo, l.item.cost_paise],
       );
     }
     await enqueueEvent(tx, Topics.KotCreated, p.tenantId, order.id, {
@@ -583,6 +614,26 @@ export class OrdersService {
         paidPaise: paid,
         payments: captured.map((x) => ({ paymentId: x.payment_id, method: x.method, netPaise: x.captured_paise - x.refunded_paise })),
         settledAt: settledAt!.toISOString(),
+        channel: order.channel as 'DINE_IN' | 'TAKEAWAY' | 'DELIVERY',
+        tableRef: order.table_ref,
+        guests: order.guests,
+        openedAt: order.created_at.toISOString(),
+        createdBy: order.created_by,
+        customer: order.customer_phone ? { phone: order.customer_phone, name: order.customer_name, marketingConsent: order.marketing_consent } : null,
+        lines: (
+          await tx.query<{ item_id: string; name: string; quantity: number; gst_rate_bp: number; line_subtotal_paise: number; line_tax_paise: number; unit_cost_paise: number | null }>(
+            'SELECT item_id, name, quantity, gst_rate_bp, line_subtotal_paise, line_tax_paise, unit_cost_paise FROM order_lines WHERE order_id = $1 ORDER BY kot_no, id',
+            [orderId],
+          )
+        ).rows.map((l) => ({
+          itemId: l.item_id,
+          name: l.name,
+          quantity: l.quantity,
+          gstRateBp: l.gst_rate_bp,
+          netPaise: l.line_subtotal_paise,
+          taxPaise: l.line_tax_paise,
+          costPaise: l.unit_cost_paise === null ? null : l.unit_cost_paise * l.quantity,
+        })),
       };
       await enqueueEvent(tx, Topics.OrderSettled, tenantId, orderId, payload);
     }
@@ -644,6 +695,7 @@ export class OrdersService {
       channel: o.channel,
       tableRef: o.table_ref,
       guests: o.guests,
+      customer: o.customer_phone ? { phone: o.customer_phone, name: o.customer_name, marketingConsent: o.marketing_consent } : null,
       kotCount: o.kot_count,
       billRequestedAt: o.bill_requested_at,
       openedAt: o.created_at,

@@ -13,6 +13,8 @@ types.setTypeParser(20, (v: string) => {
   if (!Number.isSafeInteger(n)) throw new Error('bigint value exceeds safe integer range');
   return n;
 });
+// DATE columns stay 'YYYY-MM-DD' strings: converting to a JS Date would shift the day by time zone.
+types.setTypeParser(1082, (v: string) => v);
 
 export interface DatabaseOptions {
   url: string;

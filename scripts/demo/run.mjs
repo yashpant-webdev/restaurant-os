@@ -21,9 +21,12 @@ const { FakeGateway } = require(join(root, 'services/payment/dist/gateway/fake.j
 const { OrderModule, registerPaymentConsumers } = require(join(root, 'services/order-pos/dist/app.module.js'));
 const { OrdersService } = require(join(root, 'services/order-pos/dist/orders.service.js'));
 const { DevServiceTokenProvider, PaymentClient } = require(join(root, 'services/order-pos/dist/payment-client.js'));
+const { AnalyticsModule } = require(join(root, 'services/analytics/dist/app.module.js'));
+const { registerProjections } = require(join(root, 'services/analytics/dist/projections.js'));
+const { generateHistory } = await import('./history.mjs');
 
 const PG_PORT = 54330;
-const PORTS = { ui: 4000, order: 4001, payment: 4002 };
+const PORTS = { ui: 4000, order: 4001, payment: 4002, analytics: 4003 };
 const JWT = { secret: 'demo-secret-for-local-use-only-at-least-32-chars', issuer: 'ros-demo', audience: 'ros-api' };
 const TENANT = '01900000-0000-7000-8000-000000000001';
 const OUTLET = '01900000-0000-7000-8000-0000000000a1';
@@ -64,7 +67,7 @@ function portFree(port) {
 
 async function main() {
   const busy = [];
-  for (const port of [PG_PORT, PORTS.ui, PORTS.order, PORTS.payment]) if (!(await portFree(port))) busy.push(port);
+  for (const port of [PG_PORT, ...Object.values(PORTS)]) if (!(await portFree(port))) busy.push(port);
   if (busy.length) {
     console.error(`\nPort ${busy.join(', ')} already in use: another demo is probably still running.`);
     console.error('Stop it with Ctrl+C in the terminal where it runs, or find it with:');
@@ -103,6 +106,13 @@ async function main() {
   });
   await registerPaymentConsumers(bus, odb.appDb, log, orderApp.get(OrdersService));
   await orderApp.listen(PORTS.order);
+
+  console.log('Starting analytics service...');
+  const adb = await serviceDb('analytics', join(root, 'services/analytics/migrations'));
+  await registerProjections(bus, adb.appDb, log);
+  const analyticsApp = await common.createHttpApp(AnalyticsModule.register({ log, appDb: adb.appDb, verifier, rateLimitPerMinute: 1000 }), { log, corsOrigins: cors });
+  await analyticsApp.listen(PORTS.analytics);
+
   prelay.start();
   orelay.start();
 
@@ -125,22 +135,42 @@ async function main() {
   for (let i = 0; i < tableSeats.length; i++) await post('/tables', { outletId: OUTLET, label: `T${i + 1}`, seats: tableSeats[i], sortOrder: i });
 
   const menu = [];
-  for (const [category, name, pricePaise, gstRateBp] of [
-    ['Starters', 'Paneer Tikka', 24_900, 500],
-    ['Starters', 'Chicken 65', 27_900, 500],
-    ['Starters', 'Veg Spring Roll', 18_900, 500],
-    ['Mains', 'Chicken Biryani', 29_900, 500],
-    ['Mains', 'Veg Biryani', 22_900, 500],
-    ['Mains', 'Dal Makhani', 21_900, 500],
-    ['Mains', 'Butter Chicken', 32_900, 500],
-    ['Breads', 'Butter Naan', 6_000, 500],
-    ['Breads', 'Tandoori Roti', 3_500, 500],
-    ['Drinks', 'Sweet Lassi', 8_950, 500],
-    ['Drinks', 'Masala Chai', 3_500, 500],
-    ['Desserts', 'Gulab Jamun', 9_900, 500],
-  ]) {
-    menu.push({ ...(await post('/menu-items', { outletId: OUTLET, name, pricePaise, gstRateBp })), category });
+  //  category,  name,            price,  GST,  food cost, popularity weight (for history)
+  const MENU = [
+    ['Starters', 'Paneer Tikka', 24_900, 500, 7_500, 10],
+    ['Starters', 'Chicken 65', 27_900, 500, 11_900, 7],
+    ['Starters', 'Veg Spring Roll', 18_900, 500, 4_200, 3],
+    ['Mains', 'Chicken Biryani', 29_900, 500, 10_500, 18],
+    ['Mains', 'Veg Biryani', 22_900, 500, 9_600, 9],
+    ['Mains', 'Dal Makhani', 21_900, 500, 5_200, 9],
+    ['Mains', 'Butter Chicken', 32_900, 500, 12_200, 12],
+    ['Breads', 'Butter Naan', 6_000, 500, 1_500, 20],
+    ['Breads', 'Tandoori Roti', 3_500, 500, 900, 6],
+    ['Drinks', 'Sweet Lassi', 8_950, 500, 3_400, 6],
+    ['Drinks', 'Masala Chai', 3_500, 500, 1_100, 5],
+    ['Desserts', 'Gulab Jamun', 9_900, 500, 2_000, 3],
+  ];
+  for (const [category, name, pricePaise, gstRateBp, costPaise, weight] of MENU) {
+    menu.push({ ...(await post('/menu-items', { outletId: OUTLET, name, pricePaise, gstRateBp, costPaise, category })), category, weight });
   }
+
+  // 60 days of realistic history, imported through the same event pipeline the live system uses.
+  console.log('Loading 60 days of sales history into analytics...');
+  // Imported history goes only to analytics (the live order service never saw these orders).
+  const historyBus = new common.InMemoryEventBus(log);
+  await registerProjections(historyBus, adb.appDb, log);
+  const t0 = Date.now();
+  const history = await generateHistory({ bus: historyBus, tenantId: TENANT, outletId: OUTLET, menu, days: 60 });
+  await historyBus.waitForIdle();
+  for (const e of history.expenses) {
+    const res = await fetch(`http://127.0.0.1:${PORTS.analytics}/expenses`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${owner}` },
+      body: JSON.stringify({ outletId: OUTLET, ...e }),
+    });
+    if (!res.ok) throw new Error(`expense seed failed: ${res.status}`);
+  }
+  console.log(`  ${history.orders} bills, ${history.refunds} refunds, ${history.expenses.length} expense entries (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
 
   const json = (res, status, body) => {
     res.writeHead(status, { 'content-type': 'application/json' });
@@ -155,8 +185,12 @@ async function main() {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         return res.end(readFileSync(join(root, 'scripts/demo/pos.html'))); // read per request so edits show on reload
       }
+      if (req.method === 'GET' && url.pathname === '/owner') {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        return res.end(readFileSync(join(root, 'scripts/demo/owner.html')));
+      }
       if (url.pathname === '/demo/config') {
-        return json(res, 200, { orderUrl: `http://localhost:${PORTS.order}`, paymentUrl: `http://localhost:${PORTS.payment}`, outletId: OUTLET, outletName: 'Spice Route · Indiranagar', tokens: { owner, cashier, captain }, menu });
+        return json(res, 200, { orderUrl: `http://localhost:${PORTS.order}`, paymentUrl: `http://localhost:${PORTS.payment}`, outletId: OUTLET, analyticsUrl: `http://localhost:${PORTS.analytics}`, outletName: 'Spice Route · Indiranagar', tokens: { owner, cashier, captain }, menu });
       }
       if (url.pathname === '/demo/events') return json(res, 200, events.slice(0, 50));
       if (url.pathname === '/demo/audit') {
@@ -185,9 +219,11 @@ async function main() {
   });
   await new Promise((r) => ui.listen(PORTS.ui, r));
 
-  console.log(`\nDemo ready → http://localhost:${PORTS.ui}`);
+  console.log(`\nDemo ready → http://localhost:${PORTS.ui}   (floor: captain, cashier, kitchen)`);
+  console.log(`  owner dashboard http://localhost:${PORTS.ui}/owner`);
   console.log(`  order service   http://localhost:${PORTS.order}`);
   console.log(`  payment service http://localhost:${PORTS.payment}`);
+  console.log(`  analytics       http://localhost:${PORTS.analytics}`);
   console.log('Press Ctrl+C to stop (the demo database is temporary).\n');
 
   let stopping = false;
@@ -197,9 +233,10 @@ async function main() {
     ui.close();
     await orderApp.close();
     await payApp.close();
+    await analyticsApp.close();
     await prelay.stop();
     await orelay.stop();
-    await Promise.allSettled([pdb.appDb.close(), pdb.workerDb.close(), odb.appDb.close(), odb.workerDb.close()]);
+    await Promise.allSettled([pdb.appDb.close(), pdb.workerDb.close(), odb.appDb.close(), odb.workerDb.close(), adb.appDb.close(), adb.workerDb.close()]);
     await pg.stop();
     process.exit(0);
   };

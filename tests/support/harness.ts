@@ -22,13 +22,13 @@ export const log = createLogger('test', process.env.TEST_LOG_LEVEL ?? 'silent');
 const dbUrl = (user: string, pw: string, db: string) => `postgres://${user}:${pw}@localhost:54329/${db}`;
 
 /** Fresh database for a service: drop, create with least-privilege roles, migrate. */
-export async function freshServiceDb(svc: 'payment' | 'order') {
+export async function freshServiceDb(svc: 'payment' | 'order' | 'analytics') {
   const admin = new Client({ connectionString: ADMIN_URL });
   await admin.connect();
   await admin.query(`DROP DATABASE IF EXISTS ${svc}_db WITH (FORCE)`);
   await admin.end();
   await bootstrapServiceDatabase(ADMIN_URL, svc, { app: `${svc}-app-pw`, worker: `${svc}-worker-pw` });
-  const dir = join(__dirname, '..', '..', 'services', svc === 'order' ? 'order-pos' : 'payment', 'migrations');
+  const dir = join(__dirname, '..', '..', 'services', svc === 'order' ? 'order-pos' : svc, 'migrations');
   await runMigrations(dbUrl('postgres', 'postgres', `${svc}_db`), dir, log);
   const appDb = new Database({ url: dbUrl(`${svc}_app`, `${svc}-app-pw`, `${svc}_db`), applicationName: `${svc}-api-test`, logger: log });
   const workerDb = new Database({ url: dbUrl(`${svc}_worker`, `${svc}-worker-pw`, `${svc}_db`), applicationName: `${svc}-worker-test`, logger: log });

@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Owner Dashboard</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f5f4f1; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #77756f; --line: #e4e1da; --grid: #ecebe7; --chip: #f0eee9;
+    --accent: #c2410c; --accent-ink: #fff;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+    --q100: #cde2fb; --q200: #9ec5f4; --q300: #6da7ec; --q400: #3987e5; --q500: #256abf; --q600: #184f95; --q700: #0d366b;
+    --h1: var(--q100); --h2: var(--q200); --h3: var(--q300); --h4: var(--q400); --h5: var(--q500); --h6: var(--q600); --h7: var(--q700);
+    --good: #0ca30c; --good-ink: #006300; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --bg: #121211; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #9a988f; --line: #33322f; --grid: #2a2a28; --chip: #252523;
+      --accent: #f97316; --accent-ink: #1b0f05;
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --good-ink: #4ade80;
+      /* on a dark surface "little" must sit close to the surface: same ramp, reversed */
+      --h1: #104281; --h2: #1c5cab; --h3: #256abf; --h4: #3987e5; --h5: #6da7ec; --h6: #9ec5f4; --h7: #cde2fb;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  button, input, select { font: inherit; color: inherit; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding: 12px 20px; background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 3; }
+  header h1 { font-size: 16px; margin: 0; }
+  header a { color: var(--accent); text-decoration: none; font-weight: 600; font-size: 13px; }
+  nav { display: flex; gap: 4px; flex-wrap: wrap; }
+  nav button, .chips button { border: 1px solid transparent; background: none; padding: 6px 12px; border-radius: 8px; cursor: pointer; color: var(--ink-2); font-weight: 600; }
+  nav button[aria-current="true"] { background: var(--chip); color: var(--ink); border-color: var(--line); }
+  .chips { display: flex; gap: 4px; margin-left: auto; align-items: center; }
+  .chips button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+  .chips span { color: var(--muted); font-size: 12px; margin-right: 6px; }
+  main { padding: 16px 20px 40px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 700px) { main { padding: 12px 16px 32px; } header { padding: 10px 16px; } .chips { margin-left: 0; } }
+  .grid { display: grid; gap: 14px; }
+  .kpis { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+  .two { grid-template-columns: 1.6fr 1fr; }
+  .halves { grid-template-columns: 1fr 1fr; }
+  @media (max-width: 1000px) { .two, .halves { grid-template-columns: 1fr; } }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+  .card h2 { font-size: 13px; margin: 0 0 2px; }
+  .card .sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+  .kpi .label { color: var(--ink-2); font-size: 12px; }
+  .kpi .value { font-size: 24px; font-weight: 750; font-variant-numeric: tabular-nums; letter-spacing: -.01em; margin: 2px 0; }
+  .kpi .delta { font-size: 12px; color: var(--ink-2); }
+  .up { color: var(--good-ink); } .down { color: var(--critical); }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 7px 8px; border-bottom: 1px solid var(--grid); }
+  td.n, th.n { text-align: right; white-space: nowrap; }
+  tr.strong td { font-weight: 700; border-top: 1px solid var(--line); }
+  tr.big td { font-size: 16px; font-weight: 800; border-top: 2px solid var(--ink); }
+  td.ind { padding-left: 22px; color: var(--ink-2); }
+  .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--chip); color: var(--ink); white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .hbar { display: grid; grid-template-columns: minmax(90px, 140px) 1fr auto; gap: 6px 10px; align-items: center; font-size: 13px; }
+  .hbar .track { height: 14px; position: relative; }
+  .hbar .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--s1); border-radius: 0 4px 4px 0; min-width: 2px; }
+  .hbar .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); white-space: nowrap; }
+  .heat { display: grid; grid-template-columns: 36px repeat(13, 1fr); gap: 2px; font-size: 11px; }
+  .heat .h { color: var(--muted); text-align: center; }
+  .heat .d { color: var(--ink-2); display: flex; align-items: center; }
+  .heat .c { height: 24px; border-radius: 3px; background: var(--grid); }
+  .legend-scale { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); margin-top: 8px; }
+  .legend-scale i { width: 18px; height: 10px; border-radius: 2px; display: inline-block; }
+  svg text { fill: var(--muted); font-size: 11px; }
+  .tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--surface); padding: 6px 10px; border-radius: 8px; font-size: 12px; z-index: 10; display: none; max-width: 260px; box-shadow: 0 4px 16px rgba(0,0,0,.2); }
+  .tip b { display: block; }
+  .seg { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .seg .card { padding: 12px; }
+  .seg .n { font-size: 22px; font-weight: 750; }
+  .seg p { margin: 4px 0 0; color: var(--ink-2); font-size: 12px; }
+  .btn { border: 0; border-radius: 8px; padding: 7px 12px; font-weight: 700; cursor: pointer; background: var(--accent); color: var(--accent-ink); }
+  .btn.ghost { background: var(--chip); color: var(--ink); border: 1px solid var(--line); }
+  form.inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+  form.inline label { display: grid; gap: 3px; font-size: 12px; color: var(--ink-2); }
+  form.inline input, form.inline select { padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+  .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .sev { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 12px; }
+  .sev i { width: 16px; height: 16px; border-radius: 50%; display: inline-grid; place-items: center; font-style: normal; font-size: 10px; color: #fff; }
+  .empty { color: var(--muted); padding: 20px; text-align: center; }
+  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--surface); padding: 10px 16px; border-radius: 10px; display: none; z-index: 11; max-width: calc(100% - 32px); }
+  .scroll { overflow-x: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Owner dashboard</h1>
+  <span style="color:var(--muted)" id="outlet"></span>
+  <a href="/">← Floor (captain · cashier · kitchen)</a>
+  <nav id="nav"></nav>
+  <div class="chips" id="range"><span>Period</span></div>
+</header>
+<main id="page"></main>
+<div class="tip" id="tip"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const inr = (p) => (p < 0 ? '−' : '') + '₹' + Math.round(Math.abs(p) / 100).toLocaleString('en-IN');
+const inr2 = (p) => (p < 0 ? '−' : '') + '₹' + (Math.abs(p) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const lakh = (p) => { const r = p / 100; return Math.abs(r) >= 100000 ? '₹' + (r / 100000).toFixed(2) + ' L' : inr(p); };
+const pct = (v) => (v === null || v === undefined ? '–' : v.toFixed(1) + '%');
+const num = (v) => Number(v).toLocaleString('en-IN');
+function toast(m) { const t = $('toast'); t.textContent = m; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => (t.style.display = 'none'), 3500); }
+
+const PAGES = [['overview', 'Overview'], ['menu', 'Menu engineering'], ['finance', 'Finance & GST'], ['customers', 'Customers (CRM)'], ['alerts', 'Alerts']];
+const RANGES = [[7, '7 days'], [30, '30 days'], [60, '60 days']];
+let cfg, state = { page: 'overview', days: 30 };
+try { Object.assign(state, JSON.parse(localStorage.getItem('owner-dash') || '{}')); } catch {}
+const save = () => { try { localStorage.setItem('owner-dash', JSON.stringify(state)); } catch {} };
+
+function istDay(offset = 0) { return new Date(Date.now() + 330 * 60000 + offset * 86400000).toISOString().slice(0, 10); }
+async function get(path) {
+  const q = `outletId=${cfg.outletId}&from=${istDay(-(state.days - 1))}&to=${istDay(0)}`;
+  const res = await fetch(`${cfg.analyticsUrl}${path}?${q}`, { headers: { authorization: 'Bearer ' + cfg.tokens.owner } });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body?.error?.message || 'HTTP ' + res.status);
+  return body;
+}
+
+// ---------------- tooltip ----------------
+const tip = $('tip');
+function showTip(e, html) { tip.innerHTML = html; tip.style.display = 'block'; const x = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8); tip.style.left = x + 'px'; tip.style.top = (e.clientY + 14) + 'px'; }
+function hideTip() { tip.style.display = 'none'; }
+document.addEventListener('mousemove', (e) => { const t = e.target.closest('[data-tip]'); t ? showTip(e, t.dataset.tip) : (tip.dataset.lock ? 0 : hideTip()); });
+
+// ---------------- charts ----------------
+function niceMax(v) { if (v <= 0) return 1; const p = 10 ** Math.floor(Math.log10(v)); const n = v / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p; }
+
+/** Area/line over time, 2px line, recessive grid, crosshair + tooltip. */
+function lineChart(el, rows, { value, label, fmt }) {
+  const W = el.clientWidth || 700, H = 220, m = { l: 56, r: 12, t: 10, b: 26 };
+  const max = niceMax(Math.max(...rows.map(value)));
+  const x = (i) => m.l + (i * (W - m.l - m.r)) / Math.max(1, rows.length - 1);
+  const y = (v) => m.t + (1 - v / max) * (H - m.t - m.b);
+  const pts = rows.map((r, i) => `${x(i).toFixed(1)},${y(value(r)).toFixed(1)}`).join(' ');
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * max);
+  const every = Math.ceil(rows.length / 8);
+  el.innerHTML = `<svg width="${W}" height="${H}" role="img" aria-label="Daily net sales">
+    ${ticks.map((t) => `<line x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}" stroke="var(--grid)"/><text x="${m.l - 8}" y="${y(t) + 4}" text-anchor="end">${fmt(t)}</text>`).join('')}
+    <polygon points="${m.l},${y(0)} ${pts} ${x(rows.length - 1)},${y(0)}" fill="var(--s1)" opacity=".12"/>
+    <polyline points="${pts}" fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round"/>
+    ${rows.map((r, i) => (i % every === 0 ? `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${label(r)}</text>` : '')).join('')}
+    <line id="xh" y1="${m.t}" y2="${H - m.b}" stroke="var(--ink-2)" stroke-dasharray="3 3" visibility="hidden"/>
+    <circle id="xd" r="5" fill="var(--s1)" stroke="var(--surface)" stroke-width="2" visibility="hidden"/>
+    <rect x="${m.l}" y="0" width="${W - m.l - m.r}" height="${H}" fill="transparent" id="hit"/></svg>`;
+  const svg = el.querySelector('svg'), xh = svg.querySelector('#xh'), xd = svg.querySelector('#xd');
+  svg.querySelector('#hit').addEventListener('mousemove', (e) => {
+    const b = svg.getBoundingClientRect();
+    const i = Math.max(0, Math.min(rows.length - 1, Math.round(((e.clientX - b.left - m.l) / (W - m.l - m.r)) * (rows.length - 1))));
+    const r = rows[i];
+    xh.setAttribute('x1', x(i)); xh.setAttribute('x2', x(i)); xh.setAttribute('visibility', 'visible');
+    xd.setAttribute('cx', x(i)); xd.setAttribute('cy', y(value(r))); xd.setAttribute('visibility', 'visible');
+    tip.dataset.lock = 1; showTip(e, `<b>${esc(r.tipLabel ?? label(r))}</b>${inr(value(r))} net sales · ${r.bills} bills`);
+  });
+  svg.querySelector('#hit').addEventListener('mouseleave', () => { xh.setAttribute('visibility', 'hidden'); xd.setAttribute('visibility', 'hidden'); delete tip.dataset.lock; hideTip(); });
+}
+
+/** Horizontal bars (HTML): label, bar, value. One series → no legend. */
+function hbars(rows, { value, label, fmt, tip: tipFn }) {
+  const max = Math.max(...rows.map(value), 1);
+  return `<div class="hbar">${rows.map((r) => `<span title="${esc(label(r))}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label(r))}</span>
+    <span class="track" data-tip="${esc(tipFn ? tipFn(r) : `<b>${esc(label(r))}</b>${fmt(value(r))}`)}"><span class="fill" style="width:${(value(r) / max) * 100}%"></span></span>
+    <span class="v">${fmt(value(r))}</span>`).join('')}</div>`;
+}
+
+/** Day × hour heatmap, one-hue sequential blue (light = little, dark = busy). */
+function heatmap(cells) {
+  const hours = Array.from({ length: 13 }, (_, i) => i + 11); // 11:00–23:00
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const at = new Map(cells.map((c) => [`${c.dow}-${c.hour}`, c]));
+  const max = Math.max(1, ...cells.map((c) => c.net));
+  const steps = ['--h1', '--h2', '--h3', '--h4', '--h5', '--h6', '--h7'];
+  const color = (v) => (v <= 0 ? 'var(--grid)' : `var(${steps[Math.min(steps.length - 1, Math.floor((v / max) * steps.length))]})`);
+  let html = `<div class="heat"><span></span>${hours.map((h) => `<span class="h">${h}</span>`).join('')}`;
+  days.forEach((d, i) => {
+    html += `<span class="d">${d}</span>` + hours.map((h) => { const c = at.get(`${i + 1}-${h}`); const v = c?.net ?? 0;
+      return `<span class="c" style="background:${color(v)}" data-tip="<b>${d} ${h}:00–${h + 1}:00</b>${c ? `${inr(v)} · ${c.bills} bills` : 'No sales'}"></span>`; }).join('');
+  });
+  return html + `</div><div class="legend-scale">Less ${steps.map((s) => `<i style="background:var(${s})"></i>`).join('')} More</div>`;
+}
+
+/** Menu engineering scatter: popularity (x) × contribution margin (y), threshold lines split the 4 classes. */
+function scatter(el, items, th) {
+  const pts = items.filter((i) => i.cmPerUnitPaise !== null);
+  const W = el.clientWidth || 700, H = 380, m = { l: 62, r: 20, t: 16, b: 40 };
+  const xmax = Math.ceil((Math.max(th.popularityMixPct * 1.5, ...pts.map((p) => p.mixPct)) * 1.08) / 4) * 4;
+  const ymax = niceMax(Math.max(...pts.map((p) => p.cmPerUnitPaise)));
+  const x = (v) => m.l + (v / xmax) * (W - m.l - m.r), y = (v) => m.t + (1 - v / ymax) * (H - m.t - m.b);
+  const tx = x(th.popularityMixPct), ty = y(th.avgCmPerUnitPaise);
+  const q = (txt, X, Y, anchor) => `<text x="${X}" y="${Y}" text-anchor="${anchor}" style="font-weight:700;font-size:12px;fill:var(--ink-2)">${txt}</text>`;
+  el.innerHTML = `<svg width="${W}" height="${H}" role="img" aria-label="Menu engineering matrix">
+    ${[0, 0.25, 0.5, 0.75, 1].map((f) => `<line x1="${m.l}" x2="${W - m.r}" y1="${y(f * ymax)}" y2="${y(f * ymax)}" stroke="var(--grid)"/><text x="${m.l - 8}" y="${y(f * ymax) + 4}" text-anchor="end">${inr(f * ymax)}</text>`).join('')}
+    ${[0, 0.25, 0.5, 0.75, 1].map((f) => `<text x="${x(f * xmax)}" y="${H - 22}" text-anchor="middle">${+(f * xmax).toFixed(1)}%</text>`).join('')}
+    <text x="${(W + m.l) / 2}" y="${H - 4}" text-anchor="middle">Popularity: share of items sold →</text>
+    <text transform="translate(12 ${(H - m.b) / 2}) rotate(-90)" text-anchor="middle">Profit per plate (₹) →</text>
+    <line x1="${tx}" x2="${tx}" y1="${m.t}" y2="${H - m.b}" stroke="var(--ink-2)" stroke-dasharray="4 4"/>
+    <line x1="${m.l}" x2="${W - m.r}" y1="${ty}" y2="${ty}" stroke="var(--ink-2)" stroke-dasharray="4 4"/>
+    ${q('★ STARS', W - m.r - 6, m.t + 14, 'end')}${q('PUZZLES', m.l + 6, m.t + 14, 'start')}${q('PLOWHORSES', W - m.r - 6, H - m.b - 8, 'end')}${q('DOGS', m.l + 6, H - m.b - 8, 'start')}
+    ${placeLabels(pts.map((p) => ({ p, cx: x(p.mixPct), cy: y(p.cmPerUnitPaise) })), W, H, m).map(({ p, cx, cy, lx, ly, anchor }) => `<g data-tip="<b>${esc(p.name)}</b>${p.mixPct}% of items sold · ${inr2(p.cmPerUnitPaise)} profit/plate<br>Food cost ${p.foodCostPct}% · ${CLASS[p.class].label}">
+      <circle cx="${cx}" cy="${cy}" r="12" fill="transparent"/>
+      <circle cx="${cx}" cy="${cy}" r="5" fill="var(--s1)" stroke="var(--surface)" stroke-width="2"/>
+      <text x="${lx}" y="${ly}" text-anchor="${anchor}" style="fill:var(--ink);font-size:11px">${esc(p.name)}</text></g>`).join('')}
+  </svg>`;
+}
+
+/** Greedy label placement: try positions around each dot and keep the first that collides with nothing placed so far. */
+function placeLabels(points, W, H, m) {
+  const boxes = points.map((q) => ({ x1: q.cx - 6, x2: q.cx + 6, y1: q.cy - 6, y2: q.cy + 6 })); // keep labels off the dots too
+  const hit = (b) => boxes.some((o) => b.x1 < o.x2 && b.x2 > o.x1 && b.y1 < o.y2 && b.y2 > o.y1);
+  return [...points].sort((a, b) => a.cy - b.cy).map((q) => {
+    const w = q.p.name.length * 6.2, h = 12;
+    const tries = [[8, -6, 'start'], [8, 14, 'start'], [-8, -6, 'end'], [-8, 14, 'end'], [8, -18, 'start'], [-8, -18, 'end'], [8, 26, 'start'], [-8, 26, 'end']];
+    for (const [dx, dy, anchor] of tries) {
+      const lx = q.cx + dx, ly = q.cy + dy;
+      const b = anchor === 'start' ? { x1: lx, x2: lx + w, y1: ly - h + 2, y2: ly + 2 } : { x1: lx - w, x2: lx, y1: ly - h + 2, y2: ly + 2 };
+      if (b.x1 < m.l || b.x2 > W - m.r || b.y1 < m.t || b.y2 > H - m.b) continue;
+      if (!hit(b)) { boxes.push(b); return { ...q, lx, ly, anchor }; }
+    }
+    return { ...q, lx: q.cx + 8, ly: q.cy - 6, anchor: 'start' };
+  });
+}
+
+const CLASS = {
+  STAR: { label: 'Star', tip: 'Popular and profitable. Keep quality, give it prime menu placement.' },
+  PLOWHORSE: { label: 'Plowhorse', tip: 'Popular, low margin. Re-engineer the recipe cost or nudge the price up.' },
+  PUZZLE: { label: 'Puzzle', tip: 'Profitable but rarely ordered. Promote it: captain suggestions, better photo, combo.' },
+  DOG: { label: 'Dog', tip: 'Neither popular nor profitable. Consider removing or reworking.' },
+  NO_COST: { label: 'No cost set', tip: 'Add a recipe cost to classify this item.' },
+};
+const SEGMENTS = {
+  CHAMPION: ['Champions', '5+ visits, came in the last 30 days. Reward them.'],
+  LOYAL: ['Loyal', '3+ visits, came in the last 45 days.'],
+  NEW: ['New', 'First visit in the last 30 days. Win the second visit.'],
+  OCCASIONAL: ['Occasional', 'Comes now and then.'],
+  AT_RISK: ['At risk', 'Used to come often, gone 45–90 days. Send a win-back offer.'],
+  LOST: ['Lost', 'Not seen for 90+ days.'],
+};
+const SEV = { critical: ['var(--critical)', '!', 'Critical'], serious: ['var(--serious)', '!', 'Serious'], warning: ['var(--warning)', '!', 'Warning'], info: ['var(--s1)', 'i', 'Info'] };
+
+function delta(cur, prev) {
+  if (!prev) return '<span class="delta">no earlier data</span>';
+  const d = ((cur - prev) / prev) * 100;
+  return `<span class="delta ${d >= 0 ? 'up' : 'down'}">${d >= 0 ? '▲' : '▼'} ${Math.abs(d).toFixed(1)}%</span> <span class="delta">vs previous ${state.days} days</span>`;
+}
+const kpi = (label, value, extra = '') => `<div class="card kpi"><div class="label">${label}</div><div class="value">${value}</div>${extra}</div>`;
+const card = (title, sub, body, id = '') => `<section class="card"><h2>${title}</h2><div class="sub">${sub}</div><div ${id ? `id="${id}"` : ''}>${body}</div></section>`;
+
+// ---------------- pages ----------------
+async function overview() {
+  const d = await get('/analytics/overview');
+  const k = d.kpis, p = d.previous;
+  $('page').innerHTML = `
+    <div class="grid kpis">
+      ${kpi('Net sales (ex-GST)', lakh(k.netSalesPaise), delta(k.netSalesPaise, p.netSalesPaise))}
+      ${kpi('Bills', num(k.bills), delta(k.bills, p.bills))}
+      ${kpi('Average bill', inr(k.avgBillPaise), delta(k.avgBillPaise, p.avgBillPaise))}
+      ${kpi('Guests', num(k.guests), `<span class="delta">${inr(k.perCoverPaise)} per guest</span>`)}
+      ${kpi('Avg table time', k.avgTableMinutes === null ? '–' : k.avgTableMinutes + ' min', '<span class="delta">seat → payment</span>')}
+      ${kpi('GST collected', lakh(k.taxPaise), `<span class="delta">refunds ${inr(k.refundsPaise)}</span>`)}
+    </div>
+    <div class="grid two" style="margin-top:14px">
+      ${card('Net sales per day', `${d.range.from} to ${d.range.to} · hover for detail · the last point is today, so far`, '', 'trend')}
+      ${card('Payment mix', 'Money collected by method', hbars(d.paymentMix, { value: (r) => r.net, label: (r) => r.method, fmt: lakh, tip: (r) => `<b>${r.method}</b>${inr(r.net)} · ${num(r.count)} payments` }))}
+    </div>
+    <div class="grid halves" style="margin-top:14px">
+      ${card('Busy hours', 'Net sales by weekday and hour (IST). Plan staff and prep around the dark cells.', heatmap(d.heatmap))}
+      ${card('Top 10 dishes', 'By net sales', hbars(d.topItems, { value: (r) => r.net, label: (r) => r.name, fmt: lakh, tip: (r) => `<b>${esc(r.name)}</b>${inr(r.net)} · ${num(r.quantity)} sold` }))}
+    </div>`;
+  lineChart($('trend'), d.daily, {
+    value: (r) => r.net,
+    label: (r) => new Date(r.day + 'T00:00:00Z').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' }),
+    fmt: (v) => (v >= 10000000 ? '₹' + (v / 10000000).toFixed(1) + 'L' : '₹' + Math.round(v / 100000) + 'k'),
+  });
+  d.daily.forEach((r) => (r.tipLabel = new Date(r.day + 'T00:00:00Z').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }) + (r.day === istDay(0) ? ' (today, so far)' : '')));
+}
+
+async function menu() {
+  const d = await get('/analytics/menu');
+  const counts = Object.fromEntries(Object.keys(CLASS).map((c) => [c, d.items.filter((i) => i.class === c).length]));
+  $('page').innerHTML = `
+    <div class="grid kpis">
+      ${['STAR', 'PLOWHORSE', 'PUZZLE', 'DOG'].map((c) => kpi(CLASS[c].label + 's', counts[c], `<span class="delta">${CLASS[c].tip}</span>`)).join('')}
+    </div>
+    <div style="margin-top:14px">${card('Menu engineering matrix', `Each dot is a dish. Dashed lines: 70% of an equal share of sales (${d.thresholds.popularityMixPct}%) and the menu's average profit per plate (${inr2(d.thresholds.avgCmPerUnitPaise)}).`, '', 'matrix')}</div>
+    <div style="margin-top:14px">${card('Dish detail', 'Profit per plate = average selling price − recipe cost', `<div class="scroll"><table>
+      <tr><th>Dish</th><th>Class</th><th class="n">Sold</th><th class="n">Share</th><th class="n">Net sales</th><th class="n">Avg price</th><th class="n">Food cost</th><th class="n">Profit / plate</th><th>What to do</th></tr>
+      ${d.items.map((i) => `<tr><td>${esc(i.name)}</td><td><span class="pill">${CLASS[i.class].label}</span></td><td class="n">${num(i.quantity)}</td><td class="n">${i.mixPct}%</td>
+        <td class="n">${inr(i.netPaise)}</td><td class="n">${inr2(i.avgPricePaise)}</td><td class="n">${pct(i.foodCostPct)}</td><td class="n">${i.cmPerUnitPaise === null ? '–' : inr2(i.cmPerUnitPaise)}</td>
+        <td style="color:var(--ink-2);font-size:12px">${CLASS[i.class].tip}</td></tr>`).join('')}</table></div>`)}</div>`;
+  scatter($('matrix'), d.items, d.thresholds);
+}
+
+async function finance() {
+  const [d, ex] = await Promise.all([get('/analytics/pnl'), get('/expenses')]);
+  const s = d.statement, r = d.ratios, net = s.netSalesPaise || 1;
+  const row = (label, v, cls = '', ind = false) => `<tr class="${cls}"><td class="${ind ? 'ind' : ''}">${label}</td><td class="n">${inr(v)}</td><td class="n" style="color:var(--muted)">${((v / net) * 100).toFixed(1)}%</td></tr>`;
+  $('page').innerHTML = `
+    <div class="grid kpis">
+      ${kpi('Operating profit', lakh(s.operatingProfitPaise), `<span class="delta ${s.operatingProfitPaise >= 0 ? 'up' : 'down'}">${pct(r.operatingMarginPct)} margin</span>`)}
+      ${kpi('Food cost', pct(r.foodCostPct), '<span class="delta">target 28–35%</span>')}
+      ${kpi('Prime cost', pct(r.primeCostPct), '<span class="delta">food + salaries · target &lt; 65%</span>')}
+      ${kpi('GST payable (output)', lakh(d.gst.outputCgstPaise + d.gst.outputSgstPaise), `<span class="delta">${num(d.gst.invoices)} invoices</span>`)}
+    </div>
+    <div class="grid two" style="margin-top:14px">
+      ${card('Profit & loss', `${d.range.from} to ${d.range.to}. Built automatically from every bill, refund and expense.`, `<table>
+        <tr><th>Line</th><th class="n">Amount</th><th class="n">% of sales</th></tr>
+        ${row('Net sales (ex-GST)', s.netSalesPaise)}
+        ${row('Less: refunds (ex-GST)', -s.refundsNetPaise, '', true)}
+        ${row('Round-off', s.roundOffPaise, '', true)}
+        ${row('Revenue', s.revenuePaise, 'strong')}
+        ${row('Less: food cost (recipe cost of items sold)', -s.cogsPaise, '', true)}
+        ${row('Gross profit', s.grossProfitPaise, 'strong')}
+        ${row('Payment gateway fees (est.)', -s.paymentFeesPaise, '', true)}
+        ${s.expenses.map((e) => row('Less: ' + e.category.toLowerCase(), -e.amount, '', true)).join('')}
+        ${row('Operating profit', s.operatingProfitPaise, 'big')}
+      </table><div class="note">Food cost is known for ${pct(r.costCoveragePct)} of sales (dishes with a recipe cost). GST is a liability, so it is excluded from revenue.</div>`)}
+      ${card('GST summary', 'Output tax for your GSTR-1 / 3B (intra-state supplies)', `<table>
+        <tr><th>Rate</th><th class="n">Taxable value</th><th class="n">GST</th></tr>
+        ${d.gst.byRate.map((g) => `<tr><td>${g.rateBp / 100}%</td><td class="n">${inr(g.taxablePaise)}</td><td class="n">${inr(g.taxPaise)}</td></tr>`).join('')}
+        <tr class="strong"><td>Total</td><td class="n">${inr(d.gst.byRate.reduce((t, g) => t + g.taxablePaise, 0))}</td><td class="n">${inr(d.gst.outputCgstPaise + d.gst.outputSgstPaise)}</td></tr>
+        <tr><td class="ind">CGST (as invoiced)</td><td></td><td class="n">${inr(d.gst.outputCgstPaise)}</td></tr>
+        <tr><td class="ind">SGST (as invoiced)</td><td></td><td class="n">${inr(d.gst.outputSgstPaise)}</td></tr>
+      </table>
+      <h2 style="margin-top:18px">Collections</h2><div class="sub">Where the money is: reconcile with bank and gateway settlements</div>
+      <table><tr><th>Method</th><th class="n">Collected</th><th class="n">Fee (est.)</th></tr>
+        ${d.collections.map((c) => `<tr><td>${c.method}</td><td class="n">${inr(c.netPaise)}</td><td class="n">${inr(c.feePaise)}</td></tr>`).join('')}
+        <tr><td>Refunded to guests</td><td class="n">${inr(-d.refundsGrossPaise)}</td><td></td></tr></table>`)}
+    </div>
+    <div class="grid halves" style="margin-top:14px">
+      ${card('Month by month', 'Net sales, food cost, expenses and profit', `<table><tr><th>Month</th><th class="n">Net sales</th><th class="n">Food cost</th><th class="n">Expenses</th><th class="n">Profit</th></tr>
+        ${d.monthly.map((m) => `<tr><td>${m.month}</td><td class="n">${lakh(m.net)}</td><td class="n">${lakh(m.cogs)}</td><td class="n">${lakh(m.expenses)}</td><td class="n ${m.profit >= 0 ? 'up' : 'down'}">${lakh(m.profit)}</td></tr>`).join('')}</table>
+        <div class="note">Months at the edges are partial (${d.monthly.map((m) => `${m.month}: ${m.from.slice(8)}–${m.to.slice(8)}`).join(', ')}); monthly costs are counted for those days only.</div>`)}
+      ${card('Expenses', 'Rent, salaries, bills… They feed the P&L instantly.', `
+        <form class="inline" id="expForm">
+          <label>Date<input name="businessDate" type="date" required value="${istDay(0)}"></label>
+          <label>Category<select name="category">${['RENT', 'SALARIES', 'UTILITIES', 'MARKETING', 'MAINTENANCE', 'OTHER'].map((c) => `<option>${c}</option>`).join('')}</select></label>
+          <label>Amount ₹<input name="amount" type="number" min="1" step="1" required style="width:110px"></label>
+          <label>Type<select name="period"><option value="ONE_TIME">One-time</option><option value="MONTHLY">Monthly (spread over the month)</option></select></label>
+          <label>Note<input name="note" maxlength="200" style="width:150px"></label>
+          <button class="btn">Add</button>
+        </form>
+        <div class="scroll" style="margin-top:10px;max-height:260px;overflow:auto"><table><tr><th>Date</th><th>Category</th><th>Type</th><th class="n">Amount</th><th>Note</th></tr>
+        ${ex.items.map((e) => `<tr><td>${e.businessDate}</td><td>${e.category}</td><td>${e.period === 'MONTHLY' ? 'Monthly' : 'One-time'}</td><td class="n">${inr(e.amountPaise)}</td><td style="color:var(--ink-2)">${esc(e.note)}</td></tr>`).join('')}</table></div>`)}
+    </div>`;
+  $('expForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const res = await fetch(`${cfg.analyticsUrl}/expenses`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + cfg.tokens.owner },
+      body: JSON.stringify({ outletId: cfg.outletId, businessDate: f.get('businessDate'), category: f.get('category'), period: f.get('period'), amountPaise: Math.round(Number(f.get('amount')) * 100), note: f.get('note') || undefined }) });
+    if (!res.ok) return toast((await res.json())?.error?.message || 'Could not save');
+    toast('Expense added; P&L updated'); render();
+  };
+}
+
+async function customers() {
+  const d = await get('/analytics/customers');
+  const s = d.summary;
+  const seg = Object.fromEntries(d.segments.map((x) => [x.segment, x]));
+  const tbl = (rows, extra) => `<div class="scroll"><table><tr><th>Guest</th><th>Mobile</th><th>Segment</th><th class="n">Visits</th><th class="n">Lifetime spend</th><th class="n">Last visit</th>${extra ? '<th></th>' : ''}</tr>
+    ${rows.map((c) => `<tr><td>${esc(c.name)}</td><td style="font-family:ui-monospace,monospace">${esc(c.phone)}</td><td><span class="pill">${SEGMENTS[c.segment][0]}</span></td>
+      <td class="n">${c.visits}</td><td class="n">${inr(c.spend)}</td><td class="n">${c.days_since === 0 ? 'today' : c.days_since === 1 ? 'yesterday' : c.days_since + ' days ago'}</td>${extra ? `<td class="n"><button class="btn ghost" data-offer="${esc(c.name)}">Send offer</button></td>` : ''}</tr>`).join('') || '<tr><td colspan="7" class="empty">Nobody here yet.</td></tr>'}</table></div>`;
+  $('page').innerHTML = `
+    <div class="grid kpis">
+      ${kpi('Known guests', num(s.customers), `<span class="delta">${num(s.consented)} agreed to offers</span>`)}
+      ${kpi('New guests', num(s.newInRange), `<span class="delta">in the last ${state.days} days</span>`)}
+      ${kpi('Bills with a phone number', pct(s.identifiedBillPct), '<span class="delta">ask captains to capture more</span>')}
+      ${kpi('Repeat bills', pct(s.repeatBillPct), '<span class="delta">of identified bills</span>')}
+    </div>
+    <div style="margin-top:14px">${card('Guest segments', 'Based on how often and how recently each guest visits', `<div class="seg">${Object.entries(SEGMENTS).map(([k, [name, desc]]) => `
+      <div class="card"><div style="color:var(--ink-2);font-size:12px;font-weight:700">${name}</div><div class="n">${num(seg[k]?.customers ?? 0)}</div>
+      <div style="font-size:12px">${inr(seg[k]?.spend ?? 0)} lifetime</div><p>${desc}</p></div>`).join('')}</div>`)}</div>
+    <div class="grid halves" style="margin-top:14px">
+      ${card('Win-back list', 'At-risk and lost regulars who agreed to receive offers', tbl(d.winBack, true))}
+      ${card('Top guests', 'By lifetime spend · phone numbers masked for privacy', tbl(d.top, false))}
+    </div>`;
+  $('page').onclick = (e) => { const b = e.target.closest('[data-offer]'); if (b) toast(`Demo: a WhatsApp "we miss you" offer would go to ${b.dataset.offer} (needs a WhatsApp Business provider)`); };
+}
+
+async function alerts() {
+  const d = await get('/analytics/alerts');
+  const by = Object.fromEntries(d.bySeverity.map((x) => [x.severity, x]));
+  const sev = (s) => `<span class="sev"><i style="background:${SEV[s][0]}">${SEV[s][1]}</i>${SEV[s][2]}</span>`;
+  $('page').innerHTML = `
+    <div class="grid kpis">
+      ${['critical', 'serious', 'warning', 'info'].map((s) => kpi(sev(s), num(by[s]?.count ?? 0), `<span class="delta">${inr(by[s]?.amount ?? 0)} involved</span>`)).join('')}
+      ${kpi('Refund rate', d.refundRatePct.toFixed(2) + '%', '<span class="delta">of gross sales · watch if &gt; 1%</span>')}
+    </div>
+    <div style="margin-top:14px">${card('What needs your attention', 'Unusual sales days, refunds, overpayments and payments that arrived after cancellation, newest first', `<div class="scroll"><table>
+      <tr><th>Severity</th><th>What happened</th><th>Type</th><th class="n">When</th></tr>
+      ${d.items.map((a) => `<tr><td>${sev(a.severity)}</td><td>${esc(a.message)}</td><td><span class="pill">${esc(a.kind)}</span></td><td class="n">${new Date(a.created_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">All clear.</td></tr>'}
+    </table></div>`)}</div>`;
+}
+
+const RENDER = { overview, menu, finance, customers, alerts };
+async function render() {
+  $('nav').innerHTML = PAGES.map(([k, l]) => `<button data-page="${k}" aria-current="${state.page === k}">${l}</button>`).join('');
+  $('range').innerHTML = '<span>Period</span>' + RANGES.map(([n, l]) => `<button data-days="${n}" aria-pressed="${state.days === n}">${l}</button>`).join('');
+  try { await RENDER[state.page](); } catch (err) { $('page').innerHTML = `<div class="card empty">Could not load: ${esc(err.message)}</div>`; }
+}
+document.addEventListener('click', (e) => {
+  const p = e.target.closest('[data-page]'); if (p) { state.page = p.dataset.page; save(); render(); }
+  const r = e.target.closest('[data-days]'); if (r) { state.days = Number(r.dataset.days); save(); render(); }
+});
+let resizeT; addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(render, 200); });
+
+(async () => {
+  cfg = await (await fetch('/demo/config')).json();
+  $('outlet').textContent = cfg.outletName;
+  render();
+})();
+</script>
+</body>
+</html>

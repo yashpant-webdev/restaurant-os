@@ -23,7 +23,8 @@ A restaurant POS and management SaaS (Petpooja-style). It is built as microservi
 packages/contracts   event schemas shared by all services (zod)
 packages/common      DB/transactions, outbox + inbox, auth, money/GST, resilient HTTP, Nest hardening
 services/payment     payments, refunds, Razorpay webhooks, reconciler
-services/order-pos   menu, orders, GST billing, invoice numbers, checkout, payment reflection
+services/order-pos   menu, tables, KOTs, orders, GST billing, invoice numbers, checkout, payment reflection
+services/analytics   owner reports built only from events: sales, menu engineering, P&L, GST, CRM, alerts
 tests/e2e            both services together: order → pay → settle → refund
 infra/docker         local Postgres, Redpanda, Redis, Keycloak
 ```
@@ -44,7 +45,19 @@ Open http://localhost:4000. A single screen shows three roles of a 10-table rest
 - **Cashier (floor):** every table as a tile with its status (free, occupied, bill requested, paying), running amount, guests, minutes open and items. Click a table for the GST bill, then take cash, UPI (press "Customer pays" to act as the customer's phone) or a split. Once paid, the invoice number is assigned and the table frees up.
 - **Kitchen:** every KOT as a ticket, the moment the captain sends it.
 
-The bottom-right panel shows the events flowing between services. Each run starts with a fresh, temporary database.
+The bottom-right panel shows the events flowing between services.
+
+**Owner dashboard: http://localhost:4000/owner** (loaded with 60 days of realistic history):
+
+| Page | What the owner gets |
+|---|---|
+| Overview | Net sales, bills, average bill, guests, table time, GST, refunds (each vs the previous period); daily trend; payment mix; busy-hours heatmap; top dishes |
+| Menu engineering | Every dish rated Star / Plowhorse / Puzzle / Dog by popularity × profit per plate, with what to do about it |
+| Finance & GST | Automatic P&L (sales − refunds − food cost − gateway fees − expenses, with monthly costs accrued by day), food and prime cost %, GST output by rate with CGST/SGST, collections by method, month by month, expense entry |
+| Customers (CRM) | Known guests, repeat rate, segments (Champions, Loyal, New, Occasional, At risk, Lost), top guests (masked numbers), win-back list of consenting guests |
+| Alerts | Sales-drop detection (each day vs the same weekday over the last 4 weeks), overpayments, late captures, refunds by size, refund rate |
+
+How analytics is set up: the analytics service never reads another service's database. It consumes `pos.order.settled`, `payment.refunded`, `payment.captured` and `pos.order.overpaid` events into its own reporting tables (inbox dedup, tenant RLS). The tables have the same shape as the planned ClickHouse / data-lake "gold" layer, so reporting can move to ClickHouse without changing the APIs. Financial reports are owner-only, and managers see sales and CRM. Each run starts with a fresh, temporary database.
 
 ## Run the tests
 
@@ -106,4 +119,4 @@ npm test
   The compose file has not been started yet; its image tags are unverified.
 - The KafkaJS adapter and the real Razorpay HTTP adapter are written but have not been exercised against live systems.
 - Production service-to-service tokens: the Keycloak client-credentials / token-exchange provider is still missing. The order service refuses to start with `NODE_ENV=production` until it exists.
-- Not built yet: discounts, KOT/kitchen, inventory, CRM, finance ledger, POS app, Kubernetes manifests, CI.
+- Not built yet: discounts, inventory, a double-entry ledger with Tally export, aggregator payout reconciliation, WhatsApp sending, POS app, Kubernetes manifests, CI. Gateway fees in the P&L are estimates (UPI 0%, card 2%).

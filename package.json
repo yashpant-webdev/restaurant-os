@@ -10,8 +10,8 @@
     "services/*"
   ],
   "scripts": {
-    "build": "tsc -b packages/contracts packages/common services/payment services/order-pos",
-    "typecheck": "tsc -b packages/contracts packages/common services/payment services/order-pos --noEmit false",
+    "build": "tsc -b packages/contracts packages/common services/payment services/order-pos services/analytics",
+    "typecheck": "tsc -b packages/contracts packages/common services/payment services/order-pos services/analytics --noEmit false",
     "test": "jest --runInBand",
     "test:unit": "jest --runInBand --selectProjects unit",
     "test:int": "jest --runInBand --selectProjects integration",
