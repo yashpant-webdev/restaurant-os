@@ -77,11 +77,22 @@ export const OrderOverpaid = z.object({
   excessPaise: Paise,
 });
 
+export const KotCreated = z.object({
+  kotId: z.string().uuid(),
+  orderId: z.string().uuid(),
+  outletId: z.string().uuid(),
+  tableRef: z.string().nullable(),
+  kotNo: z.number().int().positive(),
+  lines: z.array(z.object({ itemId: z.string().uuid(), name: z.string(), quantity: z.number().int().positive() })).min(1),
+  createdBy: z.string(),
+});
+
 export const Topics = {
   PaymentCaptured: 'payment.captured',
   PaymentFailed: 'payment.failed',
   PaymentCancelled: 'payment.cancelled',
   PaymentRefunded: 'payment.refunded',
+  KotCreated: 'pos.kot.created',
   OrderSettled: 'pos.order.settled',
   OrderOverpaid: 'pos.order.overpaid',
 } as const;
@@ -91,6 +102,7 @@ export const EventSchemas = {
   [Topics.PaymentFailed]: PaymentFailed,
   [Topics.PaymentCancelled]: PaymentCancelled,
   [Topics.PaymentRefunded]: PaymentRefunded,
+  [Topics.KotCreated]: KotCreated,
   [Topics.OrderSettled]: OrderSettled,
   [Topics.OrderOverpaid]: OrderOverpaid,
 } as const;

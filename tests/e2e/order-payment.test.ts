@@ -23,6 +23,7 @@ let pay: { app: INestApplication; url: string; appDb: Database; workerDb: Databa
 let ord: { app: INestApplication; url: string; appDb: Database; workerDb: Database; relay: OutboxRelay };
 let settled: EventEnvelope[];
 let overpaid: EventEnvelope[];
+let kots: EventEnvelope[] = [];
 let owner: string;
 let cashier: string;
 let biryani: string;
@@ -34,6 +35,7 @@ beforeAll(async () => {
   overpaid = [];
   await bus.subscribe('pos.order.settled', 'finance-test', async (e) => void settled.push(e));
   await bus.subscribe('pos.order.overpaid', 'alerts-test', async (e) => void overpaid.push(e));
+  await bus.subscribe('pos.kot.created', 'kitchen-test', async (e) => void kots.push(e));
   gateway = new FakeGateway('key-secret', 'webhook-secret');
 
   const pdb = await freshServiceDb('payment');
@@ -68,11 +70,12 @@ afterAll(async () => {
   }
 });
 
+let tableSeq = 0;
 async function newOrder() {
   const id = randomUUID();
   const res = await call(ord.url, 'POST', '/orders', {
     token: cashier,
-    body: { id, outletId: OUTLET, channel: 'DINE_IN', tableRef: 'T4', lines: [{ itemId: biryani, quantity: 2 }, { itemId: lassi, quantity: 1 }] },
+    body: { id, outletId: OUTLET, channel: 'DINE_IN', tableRef: `X${++tableSeq}`, lines: [{ itemId: biryani, quantity: 2 }, { itemId: lassi, quantity: 1 }] },
   });
   expect(res.status).toBe(201);
   return res.body;
@@ -91,7 +94,7 @@ it('computes GST and round-off on the server', async () => {
   // Replaying the same offline order is harmless.
   const replay = await call(ord.url, 'POST', '/orders', {
     token: cashier,
-    body: { id: o.id, outletId: OUTLET, channel: 'DINE_IN', tableRef: 'T4', lines: [{ itemId: biryani, quantity: 2 }, { itemId: lassi, quantity: 1 }] },
+    body: { id: o.id, outletId: OUTLET, channel: 'DINE_IN', tableRef: o.tableRef, lines: [{ itemId: biryani, quantity: 2 }, { itemId: lassi, quantity: 1 }] },
   });
   expect(replay.status).toBe(200);
 });
@@ -177,6 +180,89 @@ it('tenant isolation across the whole flow', async () => {
   const intruder = await token({ tid: randomUUID(), roles: ['owner'] });
   expect((await call(ord.url, 'GET', `/orders/${o.id}`, { token: intruder })).status).toBe(404);
   expect((await call(ord.url, 'POST', `/orders/${o.id}/payments`, { token: intruder, body: { method: 'CASH' }, headers: { 'idempotency-key': randomUUID() } })).status).toBe(404);
+});
+
+describe('dine-in table flow: captain → kitchen → cashier', () => {
+  let captain: string;
+  const floor = async () => (await call(ord.url, 'GET', `/floor?outletId=${OUTLET}`, { token: cashier })).body;
+  const table = async (label: string) => (await floor()).tables.find((t: { label: string }) => t.label === label);
+
+  beforeAll(async () => {
+    captain = await token({ tid: TENANT, roles: ['captain'], outlets: [OUTLET], sub: 'captain-ravi' });
+    for (const [label, seats] of [['T1', 2], ['T2', 4], ['T3', 6]] as const) {
+      expect((await call(ord.url, 'POST', '/tables', { token: owner, body: { outletId: OUTLET, label, seats } })).status).toBe(201);
+    }
+    expect((await call(ord.url, 'POST', '/tables', { token: owner, body: { outletId: OUTLET, label: 'T1', seats: 2 } })).status).toBe(409);
+    expect((await call(ord.url, 'POST', '/tables', { token: captain, body: { outletId: OUTLET, label: 'T9', seats: 2 } })).status).toBe(403);
+  });
+
+  it('runs a full table lifecycle', async () => {
+    expect((await table('T1')).status).toBe('FREE');
+
+    // Captain opens T1 for 2 guests: KOT #1 goes to the kitchen.
+    const orderId = randomUUID();
+    const open = await call(ord.url, 'POST', '/orders', {
+      token: captain,
+      body: { id: orderId, outletId: OUTLET, channel: 'DINE_IN', tableRef: 'T1', guests: 2, lines: [{ itemId: biryani, quantity: 2 }] },
+    });
+    expect(open.status).toBe(201);
+    let t1 = await table('T1');
+    expect(t1).toMatchObject({ status: 'OCCUPIED', order: { id: orderId, guests: 2, totalPaise: 62_800, kotCount: 1, items: [{ name: 'Chicken Biryani', quantity: 2 }] } });
+
+    // A second captain can't open the same table.
+    const clash = await call(ord.url, 'POST', '/orders', {
+      token: captain,
+      body: { id: randomUUID(), outletId: OUTLET, channel: 'DINE_IN', tableRef: 'T1', lines: [{ itemId: lassi, quantity: 1 }] },
+    });
+    expect(clash.status).toBe(409);
+    expect(clash.body.error).toMatchObject({ code: 'TABLE_OCCUPIED', details: { orderId } });
+
+    // Second round: KOT #2. Resending it (flaky Wi-Fi) adds nothing.
+    const kotId = randomUUID();
+    const round2 = { kotId, lines: [{ itemId: lassi, quantity: 2 }] };
+    expect((await call(ord.url, 'POST', `/orders/${orderId}/items`, { token: captain, body: round2 })).body.kotCount).toBe(2);
+    const resend = await call(ord.url, 'POST', `/orders/${orderId}/items`, { token: captain, body: round2 });
+    expect(resend.body).toMatchObject({ kotCount: 2, subtotalPaise: 59_800 + 17_900, totalPaise: 81_600 });
+    expect(resend.body.lines).toHaveLength(2);
+
+    // Kitchen sees both tickets, as events and on its screen.
+    await waitFor(async () => kots.filter((e) => e.key === orderId).length === 2);
+    const kds = (await call(ord.url, 'GET', `/kots?outletId=${OUTLET}`, { token: cashier })).body;
+    expect(kds.filter((k: { orderId: string }) => k.orderId === orderId).map((k: { kotNo: number }) => k.kotNo).sort()).toEqual([1, 2]);
+
+    // Captain asks for the bill.
+    await call(ord.url, 'POST', `/orders/${orderId}/request-bill`, { token: captain });
+    expect((await table('T1')).status).toBe('BILL_REQUESTED');
+
+    // Cashier starts UPI; the bill is now locked.
+    const upi = await checkout(orderId, { method: 'UPI' });
+    expect((await table('T1')).status).toBe('PAYING');
+    const late = await call(ord.url, 'POST', `/orders/${orderId}/items`, { token: captain, body: { kotId: randomUUID(), lines: [{ itemId: lassi, quantity: 1 }] } });
+    expect(late.body.error.code).toBe('BILL_LOCKED');
+
+    // Customer pays: the order settles and the table is free again.
+    const before = (await floor()).summary.settledTodayCount;
+    await webhook(gateway.simulateCustomerPayment(upi.body.checkout.gatewayOrderId).webhook);
+    await waitFor(async () => (await table('T1')).status === 'FREE');
+    const after = await floor();
+    expect(after.summary.settledTodayCount).toBe(before + 1);
+    expect((await getOrder(orderId)).invoiceNo).toMatch(/^\d{4}\/\d{6}$/);
+
+    // The table can be opened again for the next guests.
+    t1 = await call(ord.url, 'POST', '/orders', {
+      token: captain,
+      body: { id: randomUUID(), outletId: OUTLET, channel: 'DINE_IN', tableRef: 'T1', lines: [{ itemId: lassi, quantity: 1 }] },
+    });
+    expect(t1.status).toBe(201);
+  });
+
+  it('dine-in needs a table', async () => {
+    const res = await call(ord.url, 'POST', '/orders', {
+      token: captain,
+      body: { id: randomUUID(), outletId: OUTLET, channel: 'DINE_IN', lines: [{ itemId: lassi, quantity: 1 }] },
+    });
+    expect(res.status).toBe(400);
+  });
 });
 
 it('no event was dead-lettered during the run', async () => {

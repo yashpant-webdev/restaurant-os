@@ -58,7 +58,7 @@ async function main() {
 
   const bus = new common.InMemoryEventBus(log);
   const events = [];
-  const topics = ['payment.captured', 'payment.failed', 'payment.cancelled', 'payment.refunded', 'pos.order.settled', 'pos.order.overpaid'];
+  const topics = ['pos.kot.created', 'payment.captured', 'payment.failed', 'payment.cancelled', 'payment.refunded', 'pos.order.settled', 'pos.order.overpaid'];
   for (const t of topics) await bus.subscribe(t, 'demo-event-log', async (e) => void events.unshift({ ...e, receivedAt: new Date().toISOString() }));
 
   const verifier = new common.JwtVerifier({ mode: 'hs256', ...JWT });
@@ -87,24 +87,40 @@ async function main() {
   prelay.start();
   orelay.start();
 
-  const owner = await token(['owner'], 'owner@demo');
-  const cashier = await token(['cashier'], 'cashier@demo');
+  const owner = await token(['owner'], 'Owner');
+  const cashier = await token(['cashier'], 'Asha (cashier)');
 
-  const menu = [];
-  for (const [name, pricePaise, gstRateBp] of [
-    ['Chicken Biryani', 29_900, 500],
-    ['Paneer Tikka', 24_900, 500],
-    ['Butter Naan', 6_000, 500],
-    ['Dal Makhani', 21_900, 500],
-    ['Sweet Lassi', 8_950, 500],
-    ['Masala Chai', 3_500, 500],
-  ]) {
-    const res = await fetch(`http://127.0.0.1:${PORTS.order}/menu-items`, {
+  const captain = await token(['captain'], 'Ravi (captain)');
+  const post = async (path, body) => {
+    const res = await fetch(`http://127.0.0.1:${PORTS.order}${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${owner}` },
-      body: JSON.stringify({ outletId: OUTLET, name, pricePaise, gstRateBp }),
+      body: JSON.stringify(body),
     });
-    menu.push(await res.json());
+    if (!res.ok) throw new Error(`seed ${path} failed: ${res.status} ${await res.text()}`);
+    return res.json();
+  };
+
+  // A small dine-in restaurant: 10 tables and a short menu.
+  const tableSeats = [2, 2, 4, 4, 4, 6, 4, 2, 8, 4];
+  for (let i = 0; i < tableSeats.length; i++) await post('/tables', { outletId: OUTLET, label: `T${i + 1}`, seats: tableSeats[i], sortOrder: i });
+
+  const menu = [];
+  for (const [category, name, pricePaise, gstRateBp] of [
+    ['Starters', 'Paneer Tikka', 24_900, 500],
+    ['Starters', 'Chicken 65', 27_900, 500],
+    ['Starters', 'Veg Spring Roll', 18_900, 500],
+    ['Mains', 'Chicken Biryani', 29_900, 500],
+    ['Mains', 'Veg Biryani', 22_900, 500],
+    ['Mains', 'Dal Makhani', 21_900, 500],
+    ['Mains', 'Butter Chicken', 32_900, 500],
+    ['Breads', 'Butter Naan', 6_000, 500],
+    ['Breads', 'Tandoori Roti', 3_500, 500],
+    ['Drinks', 'Sweet Lassi', 8_950, 500],
+    ['Drinks', 'Masala Chai', 3_500, 500],
+    ['Desserts', 'Gulab Jamun', 9_900, 500],
+  ]) {
+    menu.push({ ...(await post('/menu-items', { outletId: OUTLET, name, pricePaise, gstRateBp })), category });
   }
 
   const json = (res, status, body) => {
@@ -121,7 +137,7 @@ async function main() {
         return res.end(readFileSync(join(root, 'scripts/demo/pos.html'))); // read per request so edits show on reload
       }
       if (url.pathname === '/demo/config') {
-        return json(res, 200, { orderUrl: `http://localhost:${PORTS.order}`, paymentUrl: `http://localhost:${PORTS.payment}`, outletId: OUTLET, tokens: { owner, cashier }, menu });
+        return json(res, 200, { orderUrl: `http://localhost:${PORTS.order}`, paymentUrl: `http://localhost:${PORTS.payment}`, outletId: OUTLET, outletName: 'Spice Route · Indiranagar', tokens: { owner, cashier, captain }, menu });
       }
       if (url.pathname === '/demo/events') return json(res, 200, events.slice(0, 50));
       if (url.pathname === '/demo/audit') {

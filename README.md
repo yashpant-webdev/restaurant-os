@@ -38,12 +38,13 @@ npm install --cache /tmp/npm-cache
 npm run demo
 ```
 
-Open http://localhost:4000. Tap menu items, place the order, then pay by cash, by UPI (press "Customer pays" to act as the customer's phone), or split between the two. The page shows:
-- the server-calculated GST bill and invoice number;
-- the events flowing between the order and payment services;
-- the payment audit trail.
+Open http://localhost:4000. A single screen shows three roles of a 10-table restaurant working together:
 
-Refunds are available from the Refund button, using an owner token. Each run uses a fresh temporary database.
+- **Captain (phone):** tap a table, set the number of guests, add items and **Send KOT**. Come back later to add another round (KOT #2, #3...), then **Request bill**.
+- **Cashier (floor):** every table as a tile with its status (free, occupied, bill requested, paying), running amount, guests, minutes open and items. Click a table for the GST bill, then take cash, UPI (press "Customer pays" to act as the customer's phone) or a split. Once paid, the invoice number is assigned and the table frees up.
+- **Kitchen:** every KOT as a ticket, the moment the captain sends it.
+
+The bottom-right panel shows the events flowing between services. Each run starts with a fresh, temporary database.
 
 ## Run the tests
 

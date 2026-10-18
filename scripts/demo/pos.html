@@ -3,77 +3,140 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Restaurant OS POS</title>
+<title>Restaurant OS Floor</title>
 <link rel="icon" href="data:,">
 <style>
   :root {
-    --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1b18; --muted: #6b665e; --line: #e4e0d8;
-    --accent: #c2410c; --accent-ink: #ffffff; --ok: #15803d; --warn: #b45309; --bad: #b91c1c; --chip: #f1eee8;
+    --bg: #f5f4f1; --panel: #ffffff; --ink: #1c1a17; --muted: #6d675e; --line: #e4e0d8; --chip: #f0ede7;
+    --accent: #c2410c; --accent-ink: #fff;
+    --free: #f0ede7; --free-ink: #6d675e;
+    --occ: #e0ecff; --occ-line: #6b9cf0; --occ-ink: #1e4fa8;
+    --bill: #fff1df; --bill-line: #f59e0b; --bill-ink: #9a5b00;
+    --pay: #f1e8ff; --pay-line: #a173f0; --pay-ink: #5b2bb5;
+    --ok: #15803d; --bad: #b91c1c;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #151413; --panel: #1f1d1b; --ink: #f3f1ed; --muted: #a39d93; --line: #34312d;
-      --accent: #f97316; --accent-ink: #1b0f05; --ok: #4ade80; --warn: #fbbf24; --bad: #f87171; --chip: #2a2724; }
+    :root { --bg: #141312; --panel: #1d1b19; --ink: #f2f0ec; --muted: #a29b90; --line: #33302c; --chip: #282522;
+      --accent: #f97316; --accent-ink: #1b0f05;
+      --free: #24221f; --free-ink: #a29b90;
+      --occ: #182640; --occ-line: #4f86e6; --occ-ink: #a9c7ff;
+      --bill: #33240f; --bill-line: #f59e0b; --bill-ink: #fcd38a;
+      --pay: #2a1d40; --pay-line: #a173f0; --pay-ink: #d7c2ff;
+      --ok: #4ade80; --bad: #f87171; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { display: flex; align-items: baseline; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
-  header h1 { font-size: 17px; margin: 0; }
-  header span { color: var(--muted); font-size: 13px; }
-  main { display: grid; grid-template-columns: 1.1fr 1fr 1.2fr; gap: 16px; padding: 16px 20px; }
-  @media (max-width: 1000px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
-  .menu { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
-  .item { text-align: left; border: 1px solid var(--line); background: var(--chip); color: var(--ink); border-radius: 8px; padding: 10px; cursor: pointer; font: inherit; }
-  .item:hover { border-color: var(--accent); }
-  .item b { display: block; }
-  .item small { color: var(--muted); }
-  table { width: 100%; border-collapse: collapse; }
-  td { padding: 5px 0; border-bottom: 1px dashed var(--line); vertical-align: top; }
-  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  tr.total td { font-weight: 700; border-bottom: none; font-size: 16px; padding-top: 8px; }
-  .qty button { width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--line); background: var(--chip); color: var(--ink); cursor: pointer; }
-  .btn { border: 0; border-radius: 8px; padding: 9px 14px; font: inherit; font-weight: 600; cursor: pointer; background: var(--accent); color: var(--accent-ink); }
+  button { font: inherit; color: inherit; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 12px 18px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; }
+  header .outlet { color: var(--muted); }
+  .stats { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+  .stat { background: var(--chip); border-radius: 8px; padding: 4px 10px; font-size: 12px; }
+  .stat b { font-size: 14px; font-variant-numeric: tabular-nums; }
+  main { display: grid; grid-template-columns: 340px 1fr; gap: 14px; padding: 14px 18px; align-items: start; }
+  .lower { grid-column: 1 / -1; display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; }
+  @media (max-width: 900px) { main, .lower { grid-template-columns: 1fr; padding: 10px 16px; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; min-width: 0; }
+  .panel > h2 { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+  .panel > h2 span { text-transform: none; letter-spacing: 0; }
+
+  /* ---- captain phone ---- */
+  .phone { border: 8px solid var(--ink); border-radius: 28px; padding: 0; overflow: hidden; height: 640px; display: flex; flex-direction: column; }
+  .phone .bar { padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
+  .phone .bar b { flex: 1; }
+  .phone .body { flex: 1; overflow: auto; padding: 12px; }
+  .phone .foot { border-top: 1px solid var(--line); padding: 10px 12px; display: flex; gap: 8px; }
+  .link { background: none; border: 0; color: var(--accent); cursor: pointer; padding: 4px; font-weight: 600; }
+
+  .tables { display: grid; gap: 8px; }
+  .tables.small { grid-template-columns: repeat(3, 1fr); }
+  .tables.big { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .tbl { text-align: left; border-radius: 10px; border: 1.5px solid var(--line); background: var(--free); color: var(--free-ink); padding: 8px 10px; cursor: pointer; min-height: 70px; display: flex; flex-direction: column; gap: 2px; }
+  .tbl:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .tbl .lbl { font-weight: 800; font-size: 15px; color: var(--ink); display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+  .tbl .lbl small { font-weight: 600; font-size: 11px; color: inherit; }
+  .tbl .amt { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tbl ul { margin: 4px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--muted); }
+  .tbl.OCCUPIED { background: var(--occ); border-color: var(--occ-line); color: var(--occ-ink); }
+  .tbl.BILL_REQUESTED { background: var(--bill); border-color: var(--bill-line); color: var(--bill-ink); }
+  .tbl.PAYING { background: var(--pay); border-color: var(--pay-line); color: var(--pay-ink); }
+  .tbl.sel { outline: 2.5px solid var(--accent); outline-offset: 1px; }
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; border: 1.5px solid; }
+
+  .cat { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 12px 0 4px; }
+  .mi { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+  .mi .n { flex: 1; }
+  .mi .n small { display: block; color: var(--muted); }
+  .step { display: inline-flex; align-items: center; gap: 6px; }
+  .step button { width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--line); background: var(--chip); cursor: pointer; font-weight: 700; }
+  .step span { min-width: 16px; text-align: center; font-variant-numeric: tabular-nums; }
+  .kot { background: var(--chip); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; font-size: 13px; }
+  .kot b { font-size: 12px; color: var(--muted); display: block; }
+
+  .btn { border: 0; border-radius: 9px; padding: 10px 14px; font-weight: 700; cursor: pointer; background: var(--accent); color: var(--accent-ink); }
   .btn.ghost { background: var(--chip); color: var(--ink); border: 1px solid var(--line); }
+  .btn.small { padding: 6px 10px; font-size: 12px; }
   .btn:disabled { opacity: .45; cursor: not-allowed; }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
-  input { font: inherit; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); width: 120px; }
-  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--chip); }
-  .s-OPEN, .s-PENDING { color: var(--warn); } .s-SETTLED, .s-CAPTURED, .s-SUCCEEDED { color: var(--ok); }
-  .s-FAILED, .s-CANCELLED { color: var(--bad); }
-  .empty { color: var(--muted); padding: 18px 0; text-align: center; }
-  .upi { margin-top: 10px; padding: 10px; border: 1px dashed var(--warn); border-radius: 8px; }
-  .log { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 340px; overflow: auto; }
-  .log div { padding: 6px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
-  .log .t { color: var(--accent); font-weight: 700; }
-  .wide { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; background: none; border: 0; padding: 0; }
-  @media (max-width: 1000px) { .wide { grid-template-columns: 1fr; } }
-  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 8px; display: none; max-width: calc(100% - 32px); }
+  .grow { flex: 1; }
+
+  /* ---- cashier ---- */
+  .cashier { display: grid; grid-template-columns: 1fr 330px; gap: 14px; }
+  @media (max-width: 1150px) { .cashier { grid-template-columns: 1fr; } }
+  .bill { border-left: 1px solid var(--line); padding-left: 14px; min-width: 0; }
+  @media (max-width: 1150px) { .bill { border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 12px; } }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 4px 0; vertical-align: top; }
+  td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  tr.sep td { border-top: 1px solid var(--line); }
+  tr.total td { font-size: 17px; font-weight: 800; padding-top: 8px; }
   .muted { color: var(--muted); }
+  .pill { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: var(--chip); }
+  .s-CAPTURED, .s-SETTLED, .s-SUCCEEDED { color: var(--ok); } .s-FAILED, .s-CANCELLED { color: var(--bad); } .s-PENDING, .s-OPEN { color: var(--bill-ink); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  input { font: inherit; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); width: 110px; }
+  .upi { margin-top: 10px; border: 1.5px dashed var(--pay-line); border-radius: 10px; padding: 10px; }
+  .empty { color: var(--muted); text-align: center; padding: 24px 8px; }
+
+  /* ---- kitchen + events ---- */
+  .tickets { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; max-height: 300px; overflow: auto; }
+  .ticket { border: 1px solid var(--line); border-top: 4px solid var(--occ-line); border-radius: 8px; padding: 8px 10px; background: var(--bg); font-size: 13px; }
+  .ticket.new { border-top-color: var(--accent); }
+  .ticket .h { display: flex; justify-content: space-between; font-weight: 800; }
+  .ticket .m { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .log { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 300px; overflow: auto; }
+  .log div { padding: 5px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+  .log .t { color: var(--accent); font-weight: 700; }
+  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px; display: none; max-width: calc(100% - 32px); z-index: 5; }
 </style>
 </head>
 <body>
-<header><h1>Restaurant OS · POS demo</h1><span>Table T4 · real Postgres + order &amp; payment services · fake Razorpay</span></header>
+<header>
+  <h1>Restaurant OS</h1><span class="outlet" id="outlet"></span>
+  <div class="stats" id="stats"></div>
+</header>
+
 <main>
-  <section>
-    <h2>Menu</h2>
-    <div class="menu" id="menu"></div>
+  <section class="panel phone" aria-label="Captain app">
+    <div class="bar" id="capBar"></div>
+    <div class="body" id="capBody"></div>
+    <div class="foot" id="capFoot"></div>
   </section>
 
-  <section>
-    <h2>Cart</h2>
-    <div id="cart"></div>
-    <div class="row"><button class="btn" id="place" disabled>Place order</button><button class="btn ghost" id="clear">Clear</button></div>
+  <section class="panel">
+    <h2>Cashier · floor <span class="muted">Asha (cashier)</span></h2>
+    <div class="cashier">
+      <div>
+        <div class="legend"><span><i style="background:var(--free);border-color:var(--line)"></i>Free</span><span><i style="background:var(--occ);border-color:var(--occ-line)"></i>Occupied</span><span><i style="background:var(--bill);border-color:var(--bill-line)"></i>Bill requested</span><span><i style="background:var(--pay);border-color:var(--pay-line)"></i>Payment in progress</span></div>
+        <div class="tables big" id="cashFloor"></div>
+      </div>
+      <div class="bill" id="cashBill"><div class="empty">Select an occupied table to see its bill.</div></div>
+    </div>
   </section>
 
-  <section>
-    <h2>Bill &amp; payment</h2>
-    <div id="bill"><div class="empty">Place an order to see the bill.</div></div>
-  </section>
-
-  <div class="wide">
-    <section><h2>Events between services (outbox → bus → consumers)</h2><div class="log" id="events"></div></section>
-    <section><h2>Payment audit trail</h2><div class="log" id="audit"><div class="muted">Click “Audit” on a payment.</div></div></section>
+  <div class="lower">
+    <section class="panel"><h2>Kitchen display (KOTs) <span class="muted">newest first</span></h2><div class="tickets" id="kitchen"></div></section>
+    <section class="panel"><h2>Events between services</h2><div class="log" id="events"></div></section>
   </div>
 </main>
 <div class="toast" id="toast"></div>
@@ -81,142 +144,248 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const inr = (p) => (p < 0 ? '-' : '') + '₹' + (Math.abs(p) / 100).toFixed(2);
+const inr0 = (p) => '₹' + Math.round(p / 100).toLocaleString('en-IN');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-let cfg, order = null;
-const cart = new Map();
+const mins = (iso) => Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
+const time = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const STATUS = { FREE: 'Free', OCCUPIED: 'Occupied', BILL_REQUESTED: 'Bill requested', PAYING: 'Paying' };
 
-function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => (t.style.display = 'none'), 3500); }
+let cfg, floor = { tables: [], summary: {} };
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => (t.style.display = 'none'), 3200); }
 
 async function api(base, method, path, { body, role = 'cashier', key } = {}) {
   const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + cfg.tokens[role] };
   if (key) headers['idempotency-key'] = key;
   const res = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.error?.message || ('HTTP ' + res.status));
+  if (!res.ok) { const e = new Error(data?.error?.message || 'HTTP ' + res.status); e.code = data?.error?.code; e.details = data?.error?.details; throw e; }
   return data;
 }
+const orderApi = (m, p, o) => api(cfg.orderUrl, m, p, o);
 
-function renderMenu() {
-  $('menu').innerHTML = cfg.menu.map((m) => `<button class="item" data-id="${m.id}"><b>${esc(m.name)}</b><small>${inr(m.pricePaise)} · GST ${m.gstRateBp / 100}%</small></button>`).join('');
-  $('menu').onclick = (e) => { const b = e.target.closest('.item'); if (!b) return; cart.set(b.dataset.id, (cart.get(b.dataset.id) || 0) + 1); renderCart(); };
+// ======================= CAPTAIN (phone) =======================
+const cap = { screen: 'floor', table: null, order: null, guests: 2, cart: new Map(), kotId: null };
+
+function capFloor() {
+  cap.screen = 'floor'; cap.table = null; cap.order = null; cap.cart.clear(); cap.kotId = null;
+  renderCaptain();
+}
+async function capOpen(label) {
+  const t = floor.tables.find((x) => x.label === label);
+  cap.screen = 'table'; cap.table = t; cap.cart.clear(); cap.kotId = null; cap.order = null;
+  cap.guests = Math.min(2, t.seats);
+  if (t.order) cap.order = await orderApi('GET', `/orders/${t.order.id}`, { role: 'captain' });
+  renderCaptain();
 }
 
-function renderCart() {
-  if (!cart.size) { $('cart').innerHTML = '<div class="empty">Tap menu items to add them.</div>'; $('place').disabled = true; return; }
-  let est = 0;
-  const rows = [...cart].map(([id, q]) => { const m = cfg.menu.find((x) => x.id === id); est += m.pricePaise * q;
-    return `<tr><td>${esc(m.name)}</td><td class="qty"><button data-d="-1" data-id="${id}">−</button> ${q} <button data-d="1" data-id="${id}">+</button></td><td class="num">${inr(m.pricePaise * q)}</td></tr>`; }).join('');
-  $('cart').innerHTML = `<table>${rows}<tr><td class="muted">Before tax (server calculates the bill)</td><td></td><td class="num">${inr(est)}</td></tr></table>`;
-  $('place').disabled = false;
-}
-$('cart').onclick = (e) => { const b = e.target.closest('button[data-d]'); if (!b) return; const q = (cart.get(b.dataset.id) || 0) + Number(b.dataset.d); q > 0 ? cart.set(b.dataset.id, q) : cart.delete(b.dataset.id); renderCart(); };
-$('clear').onclick = () => { cart.clear(); renderCart(); };
+function renderCaptain() {
+  if (cap.screen === 'floor') {
+    $('capBar').innerHTML = `<b>Captain · Ravi</b><span class="muted">Tables</span>`;
+    $('capBody').innerHTML = `<div class="tables small">${floor.tables.map((t) => `
+      <button class="tbl ${t.status}" data-cap-table="${t.label}">
+        <span class="lbl">${t.label}<small>${t.order ? (t.order.guests ?? '–') + '/' : ''}${t.seats} seats</small></span>
+        <span class="amt">${t.order ? inr0(t.order.totalPaise) : STATUS.FREE}</span>
+        ${t.order ? `<small>${mins(t.order.openedAt)} min</small>` : ''}
+      </button>`).join('')}</div>`;
+    $('capFoot').innerHTML = `<span class="muted" style="font-size:12px">Tap a table to take an order.</span>`;
+    return;
+  }
+  const t = cap.table, o = cap.order;
+  const locked = o && o.payments.some((p) => ['PENDING', 'CAPTURED'].includes(p.status));
+  $('capBar').innerHTML = `<button class="link" data-cap="back">‹ Tables</button><b>${t.label}</b>
+    <span class="muted">${o ? `${o.guests ?? '–'} guests · ${inr0(o.totalPaise)}` : `${t.seats} seats`}</span>`;
 
-$('place').onclick = async () => {
-  $('place').disabled = true;
+  const sent = o ? groupByKot(o.lines).map(([no, ls]) => `<div class="kot"><b>KOT #${no} · sent to kitchen</b>${ls.map((l) => `${l.quantity}× ${esc(l.name)}`).join('<br>')}</div>`).join('') : '';
+  const guests = !o ? `<div class="row" style="margin:0 0 6px"><span class="grow">Guests</span><span class="step"><button data-cap="g-">−</button><span>${cap.guests}</span><button data-cap="g+">+</button></span></div>` : '';
+  const status = o?.billRequestedAt ? `<div class="kot" style="background:var(--bill);color:var(--bill-ink)">Bill requested ${time(o.billRequestedAt)}</div>` : '';
+  const menu = locked ? `<div class="kot" style="background:var(--pay);color:var(--pay-ink)">Payment in progress at the counter. Items can't be added.</div>` :
+    groupBy(cfg.menu, (m) => m.category).map(([c, items]) => `<div class="cat">${esc(c)}</div>${items.map((m) => `
+      <div class="mi"><span class="n">${esc(m.name)}<small>${inr(m.pricePaise)}</small></span>
+      <span class="step">${cap.cart.get(m.id) ? `<button data-cap="-" data-id="${m.id}">−</button><span>${cap.cart.get(m.id)}</span>` : ''}<button data-cap="+" data-id="${m.id}">+</button></span></div>`).join('')}`).join('');
+  $('capBody').innerHTML = guests + status + sent + menu;
+
+  const n = [...cap.cart.values()].reduce((a, b) => a + b, 0);
+  $('capFoot').innerHTML = `
+    <button class="btn grow" data-cap="send" ${n ? '' : 'disabled'}>Send KOT${n ? ` (${n})` : ''}</button>
+    ${o ? `<button class="btn ghost" data-cap="bill" ${o.billRequestedAt || locked ? 'disabled' : ''}>Request bill</button>` : ''}`;
+}
+
+$('capBody').parentElement.addEventListener('click', async (e) => {
+  const b = e.target.closest('button'); if (!b) return;
   try {
-    order = await api(cfg.orderUrl, 'POST', '/orders', { body: { id: crypto.randomUUID(), outletId: cfg.outletId, channel: 'DINE_IN', tableRef: 'T4', lines: [...cart].map(([itemId, quantity]) => ({ itemId, quantity })) } });
-    location.hash = 'order=' + order.id; // survives page reloads
-    cart.clear(); renderCart(); renderBill();
-  } catch (e) { toast(e.message); $('place').disabled = false; }
-};
+    if (b.dataset.capTable) return capOpen(b.dataset.capTable);
+    const a = b.dataset.cap; if (!a) return;
+    if (a === 'back') return capFloor();
+    if (a === 'g-' || a === 'g+') { cap.guests = Math.max(1, Math.min(cap.table.seats + 4, cap.guests + (a === 'g+' ? 1 : -1))); return renderCaptain(); }
+    if (a === '+' || a === '-') { const q = (cap.cart.get(b.dataset.id) || 0) + (a === '+' ? 1 : -1); q > 0 ? cap.cart.set(b.dataset.id, q) : cap.cart.delete(b.dataset.id); cap.kotId = null; return renderCaptain(); }
+    if (a === 'send') {
+      b.disabled = true;
+      const lines = [...cap.cart].map(([itemId, quantity]) => ({ itemId, quantity }));
+      cap.kotId = cap.kotId || crypto.randomUUID(); // same id if we have to resend after a network error
+      if (!cap.order) {
+        try {
+          cap.order = await orderApi('POST', '/orders', { role: 'captain', body: { id: cap.kotId, outletId: cfg.outletId, channel: 'DINE_IN', tableRef: cap.table.label, guests: cap.guests, lines } });
+        } catch (err) {
+          if (err.code !== 'TABLE_OCCUPIED') throw err;
+          toast(`${cap.table.label} was just opened by someone else: added your items to it`);
+          cap.order = await orderApi('POST', `/orders/${err.details.orderId}/items`, { role: 'captain', body: { kotId: cap.kotId, lines } });
+        }
+      } else {
+        cap.order = await orderApi('POST', `/orders/${cap.order.id}/items`, { role: 'captain', body: { kotId: cap.kotId, lines } });
+      }
+      toast(`KOT #${cap.order.kotCount} sent to kitchen for ${cap.table.label}`);
+      cap.cart.clear(); cap.kotId = null;
+      await refresh(true);
+      return renderCaptain();
+    }
+    if (a === 'bill') {
+      cap.order = await orderApi('POST', `/orders/${cap.order.id}/request-bill`, { role: 'captain' });
+      toast(`Bill requested for ${cap.table.label}`);
+      await refresh(true);
+      return capFloor();
+    }
+  } catch (err) { toast(err.message); renderCaptain(); }
+});
 
-let pendingCheckout = {};
-function renderBill() {
-  if (!order) return;
-  const o = order;
-  const lines = o.lines.map((l) => `<tr><td>${esc(l.name)} × ${l.quantity}</td><td class="num">${inr(l.line_subtotal_paise)}</td></tr>`).join('');
-  const pays = o.payments.map((p) => `<tr><td>${p.method} <span class="pill s-${p.status}">${p.status}</span>${p.refundedPaise ? ` <span class="muted">refunded ${inr(p.refundedPaise)}</span>` : ''}</td>
-      <td class="num">${inr(p.amountPaise)}<br>
-      ${p.status === 'CAPTURED' && p.capturedPaise > p.refundedPaise ? `<button class="btn ghost" data-refund="${p.paymentId}">Refund</button> ` : ''}
-      ${p.status === 'PENDING' ? `<button class="btn ghost" data-cancel="${p.paymentId}">Cancel</button> ` : ''}
-      <button class="btn ghost" data-audit="${p.paymentId}">Audit</button></td></tr>`).join('');
-  const pendingUpi = o.payments.find((p) => p.status === 'PENDING' && pendingCheckout[p.paymentId]);
-  $('bill').innerHTML = `
-    <div class="row" style="margin:0 0 8px;justify-content:space-between"><span>Order <span class="pill s-${o.status}">${o.status}</span></span>
-      <span class="muted">${o.invoiceNo ? 'Invoice ' + esc(o.invoiceNo) : 'No invoice yet'}</span></div>
+// ======================= CASHIER =======================
+const cash = { label: null, order: null, checkout: {} };
+
+function renderCashFloor() {
+  $('cashFloor').innerHTML = floor.tables.map((t) => `
+    <button class="tbl ${t.status} ${cash.label === t.label ? 'sel' : ''}" data-cash-table="${t.label}">
+      <span class="lbl">${t.label}<small>${STATUS[t.status]}</small></span>
+      ${t.order ? `<span class="amt">${inr(t.order.totalPaise)}</span>
+        <small>${t.order.guests ?? '–'} guests · ${mins(t.order.openedAt)} min · ${t.order.kotCount} KOT</small>
+        <ul>${t.order.items.slice(0, 3).map((i) => `<li>${i.quantity}× ${esc(i.name)}</li>`).join('')}${t.order.items.length > 3 ? `<li>+${t.order.items.length - 3} more</li>` : ''}</ul>`
+      : `<small>${t.seats} seats</small>`}
+    </button>`).join('');
+}
+
+function renderCashBill() {
+  const o = cash.order;
+  if (!o) { $('cashBill').innerHTML = `<div class="empty">${cash.label ? `${cash.label} is free.` : 'Select an occupied table to see its bill.'}</div>`; return; }
+  const lines = groupByKot(o.lines).map(([no, ls]) => `<tr><td colspan="2" class="muted" style="font-size:11px;padding-top:6px">KOT #${no}</td></tr>` +
+    ls.map((l) => `<tr><td>${l.quantity}× ${esc(l.name)}</td><td class="num">${inr(l.line_subtotal_paise)}</td></tr>`).join('')).join('');
+  const pendingUpi = o.payments.find((p) => p.status === 'PENDING' && cash.checkout[p.paymentId]);
+  $('cashBill').innerHTML = `
+    <div class="row" style="margin:0 0 6px;justify-content:space-between"><b style="font-size:16px">${esc(o.tableRef)} · ${o.guests ?? '–'} guests</b><span class="pill s-${o.status}">${o.status}</span></div>
+    <div class="muted" style="font-size:12px">${o.invoiceNo ? 'Invoice ' + esc(o.invoiceNo) : `Opened ${time(o.openedAt)}${o.billRequestedAt ? ' · bill requested ' + time(o.billRequestedAt) : ''}`}</div>
     <table>${lines}
-      <tr><td class="muted">Subtotal</td><td class="num">${inr(o.subtotalPaise)}</td></tr>
+      <tr class="sep"><td class="muted">Subtotal</td><td class="num">${inr(o.subtotalPaise)}</td></tr>
       <tr><td class="muted">CGST 2.5%</td><td class="num">${inr(o.cgstPaise)}</td></tr>
       <tr><td class="muted">SGST 2.5%</td><td class="num">${inr(o.sgstPaise)}</td></tr>
       <tr><td class="muted">Round off</td><td class="num">${inr(o.roundOffPaise)}</td></tr>
       <tr class="total"><td>Total</td><td class="num">${inr(o.totalPaise)}</td></tr>
-      <tr><td class="muted">Paid (net of refunds)</td><td class="num">${inr(o.paidPaise)}</td></tr>
-      <tr><td class="muted">Due</td><td class="num">${inr(o.duePaise)}</td></tr>
-      ${o.overpaidPaise ? `<tr><td style="color:var(--bad)">Overpaid: refund customer</td><td class="num" style="color:var(--bad)">${inr(o.overpaidPaise)}</td></tr>` : ''}
+      <tr><td class="muted">Paid</td><td class="num">${inr(o.paidPaise)}</td></tr>
+      ${o.status === 'OPEN' ? `<tr><td class="muted">Due</td><td class="num">${inr(o.duePaise)}</td></tr>` : ''}
+      ${o.overpaidPaise ? `<tr><td style="color:var(--bad)">Overpaid: refund</td><td class="num" style="color:var(--bad)">${inr(o.overpaidPaise)}</td></tr>` : ''}
     </table>
-    ${o.status === 'OPEN' && o.duePaise > 0 ? `<div class="row">
-      <button class="btn" data-pay="CASH">Cash ${inr(o.duePaise)}</button>
-      <button class="btn" data-pay="UPI">UPI ${inr(o.duePaise)}</button></div>
-      <div class="row"><input id="part" type="number" min="1" step="0.01" placeholder="₹ amount"><button class="btn ghost" data-pay="CASH" data-part="1">Part cash</button></div>` : ''}
-    ${pendingUpi ? `<div class="upi"><b>UPI QR shown to customer</b><div class="muted">Razorpay order ${esc(pendingCheckout[pendingUpi.paymentId].gatewayOrderId)}</div>
-      <div class="row"><button class="btn" data-sim="${pendingUpi.paymentId}" data-ok="1">Customer pays</button><button class="btn ghost" data-sim="${pendingUpi.paymentId}" data-ok="0">Payment fails</button></div></div>` : ''}
-    ${o.payments.length ? `<h2 style="margin-top:14px">Payments</h2><table>${pays}</table>` : ''}
-    ${o.status !== 'OPEN' ? `<div class="row"><button class="btn ghost" id="neworder">New order</button></div>` : ''}`;
+    ${o.status === 'OPEN' && o.duePaise > 0 ? `<div class="row"><button class="btn" data-pay="CASH">Cash ${inr(o.duePaise)}</button><button class="btn" data-pay="UPI">UPI</button></div>
+      <div class="row"><input id="part" type="number" min="1" step="0.01" placeholder="₹ split"><button class="btn ghost small" data-pay="CASH" data-part="1">Part cash</button></div>` : ''}
+    ${pendingUpi ? `<div class="upi"><b>UPI QR on customer display</b><div class="muted" style="font-size:12px">${inr(pendingUpi.amountPaise)} · Razorpay ${esc(cash.checkout[pendingUpi.paymentId].gatewayOrderId)}</div>
+      <div class="row"><button class="btn small" data-sim="${pendingUpi.paymentId}" data-ok="1">Customer pays</button><button class="btn ghost small" data-sim="${pendingUpi.paymentId}" data-ok="0">Payment fails</button><button class="btn ghost small" data-cancel="${pendingUpi.paymentId}">Cancel</button></div></div>` : ''}
+    ${o.payments.length ? `<div class="cat">Payments</div><table>${o.payments.map((p) => `<tr><td>${p.method} <span class="pill s-${p.status}">${p.status}</span>${p.refundedPaise ? ` <span class="muted">−${inr(p.refundedPaise)}</span>` : ''}</td>
+      <td class="num">${inr(p.amountPaise)} ${p.status === 'CAPTURED' && p.capturedPaise > p.refundedPaise ? `<button class="btn ghost small" data-refund="${p.paymentId}">Refund</button>` : ''}</td></tr>`).join('')}</table>` : ''}
+    ${o.status === 'SETTLED' ? `<div class="row"><span class="grow muted">Table is free for the next guests.</span><button class="btn ghost small" data-close="1">Close</button></div>` : ''}`;
 }
 
-$('bill').onclick = async (e) => {
-  const t = e.target.closest('button'); if (!t) return;
+$('cashFloor').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-cash-table]'); if (!b) return;
+  cash.label = b.dataset.cashTable;
+  const t = floor.tables.find((x) => x.label === cash.label);
+  cash.order = t.order ? await orderApi('GET', `/orders/${t.order.id}`) : null;
+  renderCashFloor(); renderCashBill();
+});
+
+$('cashBill').addEventListener('click', async (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  const o = cash.order;
   try {
-    if (t.dataset.pay) {
+    if (b.dataset.pay) {
       let amountPaise;
-      if (t.dataset.part) { amountPaise = Math.round(Number($('part').value) * 100); if (!(amountPaise > 0)) return toast('Enter an amount'); }
-      const r = await api(cfg.orderUrl, 'POST', `/orders/${order.id}/payments`, { body: { method: t.dataset.pay, amountPaise }, key: crypto.randomUUID() });
-      if (r.checkout) pendingCheckout[r.paymentId] = r.checkout;
-      toast(`${t.dataset.pay} payment ${r.status.toLowerCase()}`);
-    } else if (t.dataset.sim) {
-      const ok = t.dataset.ok === '1';
-      await fetch('/demo/simulate-upi', { method: 'POST', body: JSON.stringify({ gatewayOrderId: pendingCheckout[t.dataset.sim].gatewayOrderId, succeed: ok }) });
-      toast(ok ? 'Signed webhook sent: payment captured' : 'Attempt failed; customer can retry or you can cancel');
-    } else if (t.dataset.cancel) {
-      await api(cfg.orderUrl, 'POST', `/orders/${order.id}/payments/${t.dataset.cancel}/cancel`);
-      toast('Payment cancelled');
-    } else if (t.dataset.refund) {
-      const amt = prompt('Refund amount in ₹ (manager/owner only)');
-      if (!amt) return;
-      const r = await api(cfg.paymentUrl, 'POST', `/payments/${t.dataset.refund}/refunds`, { role: 'owner', key: crypto.randomUUID(), body: { amountPaise: Math.round(Number(amt) * 100), reason: 'Customer complaint' } });
+      if (b.dataset.part) { amountPaise = Math.round(Number($('part').value) * 100); if (!(amountPaise > 0)) return toast('Enter an amount'); }
+      const r = await orderApi('POST', `/orders/${o.id}/payments`, { body: { method: b.dataset.pay, amountPaise }, key: crypto.randomUUID() });
+      if (r.checkout) cash.checkout[r.paymentId] = r.checkout;
+      toast(`${b.dataset.pay} ${inr(r.amountPaise)} ${r.status === 'CAPTURED' ? 'received' : 'waiting for customer'}`);
+    } else if (b.dataset.sim) {
+      await fetch('/demo/simulate-upi', { method: 'POST', body: JSON.stringify({ gatewayOrderId: cash.checkout[b.dataset.sim].gatewayOrderId, succeed: b.dataset.ok === '1' }) });
+      toast(b.dataset.ok === '1' ? 'Razorpay webhook received: payment captured' : 'Payment attempt failed; customer can retry');
+    } else if (b.dataset.cancel) {
+      await orderApi('POST', `/orders/${o.id}/payments/${b.dataset.cancel}/cancel`);
+      toast('UPI payment cancelled');
+    } else if (b.dataset.refund) {
+      const amt = prompt('Refund amount in ₹ (needs manager/owner)'); if (!amt) return;
+      const r = await api(cfg.paymentUrl, 'POST', `/payments/${b.dataset.refund}/refunds`, { role: 'owner', key: crypto.randomUUID(), body: { amountPaise: Math.round(Number(amt) * 100), reason: 'Customer complaint' } });
       toast('Refund ' + r.status.toLowerCase());
-    } else if (t.dataset.audit) {
-      const rows = await (await fetch('/demo/audit?paymentId=' + t.dataset.audit)).json();
-      $('audit').innerHTML = rows.map((r) => `<div><span class="t">${esc(r.action)}</span> ${esc(r.from_status ?? '')} → ${esc(r.to_status ?? '')} · ${esc(r.actor)}<br><span class="muted">${new Date(r.at).toLocaleTimeString()} ${esc(JSON.stringify(r.detail))}</span></div>`).join('') || '<div class="muted">No entries</div>';
-    } else if (t.id === 'neworder') { order = null; history.replaceState(null, '', location.pathname); $('bill').innerHTML = '<div class="empty">Place an order to see the bill.</div>'; return; }
+    } else if (b.dataset.close) { cash.label = null; cash.order = null; }
     await refresh(true);
   } catch (err) { toast(err.message); }
-};
+});
 
-// Polls for changes made by other services (webhooks, events) and redraws only
-// when something actually changed, so typing and clicking are never interrupted.
-let lastOrderJson = '', lastEventsJson = '';
+// ======================= KITCHEN + EVENTS =======================
+function renderKitchen(kots) {
+  $('kitchen').innerHTML = kots.map((k) => `<div class="ticket ${mins(k.createdAt) < 1 ? 'new' : ''}">
+    <div class="h"><span>${esc(k.tableRef ?? 'Takeaway')}</span><span>KOT #${k.kotNo}</span></div>
+    <div class="m">${time(k.createdAt)} · ${esc(k.createdBy)}</div>
+    ${k.lines.map((l) => `<div>${l.quantity}× ${esc(l.name)}</div>`).join('')}</div>`).join('') || '<div class="empty">No tickets yet.</div>';
+}
+function renderEvents(ev) {
+  $('events').innerHTML = ev.map((e) => `<div><span class="t">${esc(e.type)}</span> <span class="muted">${time(e.occurredAt)}</span> ${esc(summarize(e))}</div>`).join('') || '<div class="muted">No events yet.</div>';
+}
+function summarize(e) {
+  const p = e.payload;
+  if (e.type === 'pos.kot.created') return `${p.tableRef} KOT #${p.kotNo}: ${p.lines.map((l) => l.quantity + '× ' + l.name).join(', ')}`;
+  if (e.type.startsWith('payment.')) return `${p.method} ${inr(p.amountPaise)} ${p.status}${p.refundedPaise ? ' refunded ' + inr(p.refundedPaise) : ''}`;
+  if (e.type === 'pos.order.settled') return `invoice ${p.invoiceNo} ${inr(p.totalPaise)}`;
+  return JSON.stringify(p);
+}
+
+// ======================= helpers + polling =======================
+function groupBy(arr, f) { const m = new Map(); for (const x of arr) { const k = f(x); m.set(k, [...(m.get(k) || []), x]); } return [...m]; }
+function groupByKot(lines) { return groupBy(lines, (l) => l.kot_no); }
+
+function renderStats() {
+  const s = floor.summary;
+  $('stats').innerHTML = `<span class="stat">Free <b>${s.free ?? 0}</b></span><span class="stat">Occupied <b>${s.occupied ?? 0}</b></span>
+    <span class="stat">Bill requested <b>${s.billRequested ?? 0}</b></span><span class="stat">Running <b>${inr0(s.runningPaise ?? 0)}</b></span>
+    <span class="stat">Settled today <b>${inr0(s.settledTodayPaise ?? 0)}</b> (${s.settledTodayCount ?? 0} bills)</span>`;
+}
+
+const last = {};
+const changed = (k, v) => { const j = JSON.stringify(v); if (last[k] === j) return false; last[k] = j; return true; };
 async function refresh(force = false) {
-  if (order) {
-    try {
-      const fresh = await api(cfg.orderUrl, 'GET', `/orders/${order.id}`);
-      // After a reload, recover the UPI checkout details from the payment service.
-      for (const p of fresh.payments) {
-        if (p.status === 'PENDING' && p.method !== 'CASH' && !pendingCheckout[p.paymentId]) {
-          const remote = await api(cfg.paymentUrl, 'GET', `/payments/${p.paymentId}`);
-          if (remote.checkout) { pendingCheckout[p.paymentId] = remote.checkout; force = true; }
-        }
+  try {
+    const [f, kots, ev] = await Promise.all([
+      orderApi('GET', `/floor?outletId=${cfg.outletId}`),
+      orderApi('GET', `/kots?outletId=${cfg.outletId}`),
+      fetch('/demo/events').then((r) => r.json()),
+    ]);
+    floor = f;
+    if (changed('floor', f) || force) { renderStats(); renderCashFloor(); if (cap.screen === 'floor') renderCaptain(); }
+    if (changed('kots', kots)) renderKitchen(kots);
+    if (changed('events', ev)) renderEvents(ev);
+    if (cash.order) {
+      const o = await orderApi('GET', `/orders/${cash.order.id}`);
+      for (const p of o.payments) if (p.status === 'PENDING' && p.method !== 'CASH' && !cash.checkout[p.paymentId]) {
+        const r = await api(cfg.paymentUrl, 'GET', `/payments/${p.paymentId}`); if (r.checkout) { cash.checkout[p.paymentId] = r.checkout; force = true; }
       }
-      const j = JSON.stringify(fresh);
-      if (force || j !== lastOrderJson) { lastOrderJson = j; order = fresh; renderBill(); }
-    } catch {}
-  }
-  let ev;
-  try { ev = await (await fetch('/demo/events')).json(); } catch { return; } // server restarting: try again next tick
-  const ej = JSON.stringify(ev);
-  if (ej !== lastEventsJson) {
-    lastEventsJson = ej;
-    $('events').innerHTML = ev.map((e) => `<div><span class="t">${esc(e.type)}</span> <span class="muted">${new Date(e.occurredAt).toLocaleTimeString()}</span><br>${esc(JSON.stringify(e.payload))}</div>`).join('') || '<div class="muted">No events yet.</div>';
-  }
+      cash.order = o;
+      if ((changed('cashOrder', o) || force) && document.activeElement?.id !== 'part') renderCashBill();
+    } else if (force) renderCashBill();
+    if (cap.order && cap.cart.size === 0) {
+      const o = await orderApi('GET', `/orders/${cap.order.id}`, { role: 'captain' });
+      if (o.status !== 'OPEN') { toast(`${cap.table.label} settled and free`); return capFloor(); }
+      cap.order = o;
+      if (changed('capOrder', o)) renderCaptain();
+    }
+  } catch { /* server restarting; next tick retries */ }
 }
 
 (async () => {
   cfg = await (await fetch('/demo/config')).json();
-  renderMenu(); renderCart();
-  const saved = /order=([0-9a-f-]{36})/.exec(location.hash);
-  if (saved) order = { id: saved[1] };
-  refresh(true);
+  $('outlet').textContent = cfg.outletName;
+  await refresh(true);
+  renderCaptain();
   setInterval(() => refresh(), 1500);
 })();
 </script>

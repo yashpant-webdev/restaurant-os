@@ -1,7 +1,7 @@
-import { Body, Controller, Get, Headers, HttpCode, Inject, Param, ParseUUIDPipe, Post, Res } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, Inject, Param, ParseUUIDPipe, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { CurrentPrincipal, Database, Principal, Public, Roles, ZodPipe } from '@ros/common';
-import { APP_DB, CheckoutInput, CreateMenuItemInput, CreateOrderInput, OrdersService } from './orders.service';
+import { AddItemsInput, APP_DB, CheckoutInput, CreateMenuItemInput, CreateOrderInput, CreateTableInput, OrdersService } from './orders.service';
 
 @Controller()
 export class OrdersController {
@@ -11,6 +11,40 @@ export class OrdersController {
   @Roles('owner', 'manager')
   createMenuItem(@CurrentPrincipal() p: Principal, @Body(new ZodPipe(CreateMenuItemInput)) body: typeof CreateMenuItemInput._type) {
     return this.orders.createMenuItem(p, body);
+  }
+
+  @Post('tables')
+  @Roles('owner', 'manager')
+  createTable(@CurrentPrincipal() p: Principal, @Body(new ZodPipe(CreateTableInput)) body: typeof CreateTableInput._type) {
+    return this.orders.createTable(p, body);
+  }
+
+  /** Floor plan with live status of every table (captain and cashier screens). */
+  @Get('floor')
+  @Roles('owner', 'manager', 'cashier', 'captain')
+  floor(@CurrentPrincipal() p: Principal, @Query('outletId', new ParseUUIDPipe()) outletId: string) {
+    return this.orders.getFloor(p, outletId);
+  }
+
+  /** Kitchen display: latest kitchen order tickets. */
+  @Get('kots')
+  @Roles('owner', 'manager', 'cashier', 'captain')
+  kots(@CurrentPrincipal() p: Principal, @Query('outletId', new ParseUUIDPipe()) outletId: string) {
+    return this.orders.listKots(p, outletId);
+  }
+
+  @Post('orders/:id/items')
+  @HttpCode(200)
+  @Roles('owner', 'manager', 'cashier', 'captain')
+  addItems(@CurrentPrincipal() p: Principal, @Param('id', new ParseUUIDPipe()) id: string, @Body(new ZodPipe(AddItemsInput)) body: typeof AddItemsInput._type) {
+    return this.orders.addItems(p, id, body);
+  }
+
+  @Post('orders/:id/request-bill')
+  @HttpCode(200)
+  @Roles('owner', 'manager', 'cashier', 'captain')
+  requestBill(@CurrentPrincipal() p: Principal, @Param('id', new ParseUUIDPipe()) id: string) {
+    return this.orders.requestBill(p, id);
   }
 
   @Post('orders')

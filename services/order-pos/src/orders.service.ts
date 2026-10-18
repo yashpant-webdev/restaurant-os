@@ -38,17 +38,35 @@ export const CreateMenuItemInput = z
   })
   .strict();
 
+const LineInput = z.object({ itemId: z.string().uuid(), quantity: z.number().int().min(1).max(999) }).strict();
+
 export const CreateOrderInput = z
   .object({
     /** Generated on the POS device (UUIDv7), so an offline device can retry without creating duplicates. */
     id: z.string().uuid(),
     outletId: z.string().uuid(),
     channel: z.enum(['DINE_IN', 'TAKEAWAY', 'DELIVERY']),
-    tableRef: z.string().trim().max(20).optional(),
-    lines: z
-      .array(z.object({ itemId: z.string().uuid(), quantity: z.number().int().min(1).max(999) }).strict())
-      .min(1)
-      .max(200),
+    tableRef: z.string().trim().min(1).max(20).optional(),
+    guests: z.number().int().min(1).max(50).optional(),
+    lines: z.array(LineInput).min(1).max(200),
+  })
+  .strict()
+  .refine((o) => o.channel !== 'DINE_IN' || !!o.tableRef, { message: 'tableRef is required for dine-in', path: ['tableRef'] });
+
+/** A further round of items for a running table tab. kotId comes from the captain's device. */
+export const AddItemsInput = z
+  .object({
+    kotId: z.string().uuid(),
+    lines: z.array(LineInput).min(1).max(100),
+  })
+  .strict();
+
+export const CreateTableInput = z
+  .object({
+    outletId: z.string().uuid(),
+    label: z.string().trim().min(1).max(20),
+    seats: z.number().int().min(1).max(30),
+    sortOrder: z.number().int().min(0).max(10_000).optional(),
   })
   .strict();
 
@@ -76,9 +94,14 @@ interface OrderRow {
   paid_paise: number;
   overpaid_paise: number;
   invoice_no: string | null;
+  guests: number | null;
+  kot_count: number;
+  bill_requested_at: Date | null;
   created_at: Date;
   settled_at: Date | null;
 }
+
+type PricedLine = { itemId: string; quantity: number; item: { name: string; price_paise: number; gst_rate_bp: number }; lineSubtotal: number; lineTax: number };
 
 interface OrderPaymentRow {
   payment_id: string;
@@ -99,6 +122,8 @@ export function financialYear(d: Date): string {
   const start = ist.getUTCMonth() >= 3 ? y : y - 1;
   return `${String(start % 100).padStart(2, '0')}${String((start + 1) % 100).padStart(2, '0')}`;
 }
+
+const hashOf = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
 
 @Injectable()
 export class OrdersService {
@@ -126,54 +151,254 @@ export class OrdersService {
 
   // ------------------------------------------------------------- orders
 
-  /** Prices come from the menu on the server. The client sends only item ids and quantities. */
+  /**
+   * Opens an order (for dine-in: a running tab on a table). Prices come from the
+   * menu on the server; the client sends only item ids and quantities. The
+   * first round of items becomes KOT #1 and is sent to the kitchen via an event.
+   */
   async createOrder(p: Principal, input: z.infer<typeof CreateOrderInput>) {
     assertOutletAccess(p, input.outletId);
-    const requestHash = createHash('sha256').update(JSON.stringify([input.outletId, input.channel, input.tableRef ?? null, input.lines])).digest('hex');
+    const requestHash = hashOf([input.outletId, input.channel, input.tableRef ?? null, input.guests ?? null, input.lines]);
 
-    const created = await this.db.tx(
-      async (tx) => {
-        const existing = await this.findOrder(tx, input.id);
-        if (existing) {
-          if (existing.request_hash !== requestHash) throw new ConflictError('IDEMPOTENCY_MISMATCH', 'Order id already used with different content');
-          return false;
-        }
-        const ids = [...new Set(input.lines.map((l) => l.itemId))];
-        const { rows: items } = await tx.query<{ id: string; name: string; price_paise: number; gst_rate_bp: number }>(
-          `SELECT id, name, price_paise, gst_rate_bp FROM menu_items WHERE id = ANY($1::uuid[]) AND outlet_id = $2 AND is_active`,
-          [ids, input.outletId],
-        );
-        const byId = new Map(items.map((i) => [i.id, i]));
-        const missing = ids.filter((i) => !byId.has(i));
-        if (missing.length) throw new ValidationError('Unknown or inactive menu items', { itemIds: missing });
-
-        const lines = input.lines.map((l) => {
-          const item = byId.get(l.itemId)!;
-          const lineSubtotal = safeMultiply(item.price_paise, l.quantity);
-          return { ...l, item, lineSubtotal, lineTax: percentOf(lineSubtotal, item.gst_rate_bp) };
-        });
-        const subtotal = safeAdd(...lines.map((l) => l.lineSubtotal));
-        const { cgstPaise, sgstPaise } = splitGst(safeAdd(...lines.map((l) => l.lineTax)));
-        const { roundedPaise, roundOffPaise } = roundToRupee(safeAdd(subtotal, cgstPaise, sgstPaise));
-
-        const { rowCount } = await tx.query(
-          `INSERT INTO orders (id, tenant_id, outlet_id, channel, table_ref, status, request_hash, subtotal_paise, cgst_paise, sgst_paise, round_off_paise, total_paise, created_by)
-           VALUES ($1, $2, $3, $4, $5, 'OPEN', $6, $7, $8, $9, $10, $11, $12) ON CONFLICT (id) DO NOTHING`,
-          [input.id, p.tenantId, input.outletId, input.channel, input.tableRef ?? null, requestHash, subtotal, cgstPaise, sgstPaise, roundOffPaise, roundedPaise, p.userId],
-        );
-        if (!rowCount) throw new ConflictError('ORDER_ID_TAKEN', 'Concurrent request with the same order id; retry');
-        for (const l of lines) {
-          await tx.query(
-            `INSERT INTO order_lines (id, tenant_id, order_id, item_id, name, unit_price_paise, quantity, gst_rate_bp, line_subtotal_paise, line_tax_paise)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-            [newId(), p.tenantId, input.id, l.itemId, l.item.name, l.item.price_paise, l.quantity, l.item.gst_rate_bp, l.lineSubtotal, l.lineTax],
+    let created: boolean;
+    try {
+      created = await this.db.tx(
+        async (tx) => {
+          const existing = await this.findOrder(tx, input.id);
+          if (existing) {
+            if (existing.request_hash !== requestHash) throw new ConflictError('IDEMPOTENCY_MISMATCH', 'Order id already used with different content');
+            return false;
+          }
+          const priced = await this.priceLines(tx, input.outletId, input.lines);
+          const { rowCount } = await tx.query(
+            `INSERT INTO orders (id, tenant_id, outlet_id, channel, table_ref, guests, status, request_hash,
+                                 subtotal_paise, cgst_paise, sgst_paise, round_off_paise, total_paise, kot_count, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, 'OPEN', $7, 0, 0, 0, 0, 0, 1, $8) ON CONFLICT (id) DO NOTHING`,
+            [input.id, p.tenantId, input.outletId, input.channel, input.tableRef ?? null, input.guests ?? null, requestHash, p.userId],
           );
+          if (!rowCount) throw new ConflictError('ORDER_ID_TAKEN', 'Concurrent request with the same order id; retry');
+          await this.insertKot(tx, p, { id: input.id, outlet_id: input.outletId, table_ref: input.tableRef ?? null }, newId(), 1, priced, requestHash);
+          await this.recomputeTotals(tx, input.id);
+          return true;
+        },
+        { tenantId: p.tenantId },
+      );
+    } catch (err) {
+      if ((err as { constraint?: string }).constraint === 'one_open_order_per_table') {
+        const [open] = await this.db.tx(
+          async (tx) =>
+            (await tx.query<{ id: string }>(`SELECT id FROM orders WHERE outlet_id = $1 AND table_ref = $2 AND status = 'OPEN'`, [input.outletId, input.tableRef])).rows,
+          { tenantId: p.tenantId },
+        );
+        throw new ConflictError('TABLE_OCCUPIED', `Table ${input.tableRef} already has an open order`, { orderId: open?.id });
+      }
+      throw err;
+    }
+    this.relay.nudge();
+    return { created, order: await this.getOrder(p, input.id) };
+  }
+
+  /** Captain adds another round of items to a running tab (a new KOT). Blocked once payment has started. */
+  async addItems(p: Principal, orderId: string, input: z.infer<typeof AddItemsInput>) {
+    const requestHash = hashOf([orderId, input.lines]);
+    await this.db.tx(
+      async (tx) => {
+        const order = await this.lockOrder(tx, orderId);
+        assertOutletAccess(p, order.outlet_id);
+        const { rows: prior } = await tx.query<{ order_id: string; request_hash: string }>('SELECT order_id, request_hash FROM kots WHERE id = $1', [input.kotId]);
+        if (prior[0]) {
+          if (prior[0].order_id !== orderId || prior[0].request_hash !== requestHash) throw new ConflictError('IDEMPOTENCY_MISMATCH', 'kotId already used with different items');
+          return; // resend of the same KOT: nothing new goes to the kitchen
         }
-        return true;
+        if (order.status !== 'OPEN') throw new ConflictError('ORDER_NOT_OPEN', `Order is ${order.status}`);
+        const { rows: busy } = await tx.query(`SELECT 1 FROM order_payments WHERE order_id = $1 AND status IN ('PENDING','CAPTURED') LIMIT 1`, [orderId]);
+        if (busy.length) throw new ConflictError('BILL_LOCKED', 'Payment has started on this bill; finish or cancel it before adding items');
+        const priced = await this.priceLines(tx, order.outlet_id, input.lines);
+        const kotNo = order.kot_count + 1;
+        await this.insertKot(tx, p, order, input.kotId, kotNo, priced, requestHash);
+        await tx.query('UPDATE orders SET kot_count = $2, bill_requested_at = NULL, updated_at = now() WHERE id = $1', [orderId, kotNo]);
+        await this.recomputeTotals(tx, orderId);
       },
       { tenantId: p.tenantId },
     );
-    return { created, order: await this.getOrder(p, input.id) };
+    this.relay.nudge();
+    return this.getOrder(p, orderId);
+  }
+
+  /** Captain asks the cashier to prepare the bill; the table shows "bill requested" on the floor. */
+  async requestBill(p: Principal, orderId: string) {
+    await this.db.tx(
+      async (tx) => {
+        const order = await this.lockOrder(tx, orderId);
+        assertOutletAccess(p, order.outlet_id);
+        if (order.status !== 'OPEN') throw new ConflictError('ORDER_NOT_OPEN', `Order is ${order.status}`);
+        await tx.query('UPDATE orders SET bill_requested_at = COALESCE(bill_requested_at, now()), updated_at = now() WHERE id = $1', [orderId]);
+      },
+      { tenantId: p.tenantId },
+    );
+    return this.getOrder(p, orderId);
+  }
+
+  private async priceLines(tx: Tx, outletId: string, lines: { itemId: string; quantity: number }[]): Promise<PricedLine[]> {
+    const ids = [...new Set(lines.map((l) => l.itemId))];
+    const { rows: items } = await tx.query<{ id: string; name: string; price_paise: number; gst_rate_bp: number }>(
+      `SELECT id, name, price_paise, gst_rate_bp FROM menu_items WHERE id = ANY($1::uuid[]) AND outlet_id = $2 AND is_active`,
+      [ids, outletId],
+    );
+    const byId = new Map(items.map((i) => [i.id, i]));
+    const missing = ids.filter((i) => !byId.has(i));
+    if (missing.length) throw new ValidationError('Unknown or inactive menu items', { itemIds: missing });
+    return lines.map((l) => {
+      const item = byId.get(l.itemId)!;
+      const lineSubtotal = safeMultiply(item.price_paise, l.quantity);
+      return { ...l, item, lineSubtotal, lineTax: percentOf(lineSubtotal, item.gst_rate_bp) };
+    });
+  }
+
+  private async insertKot(tx: Tx, p: Principal, order: { id: string; outlet_id: string; table_ref: string | null }, kotId: string, kotNo: number, lines: PricedLine[], requestHash: string) {
+    await tx.query(`INSERT INTO kots (id, tenant_id, order_id, kot_no, request_hash, created_by) VALUES ($1, $2, $3, $4, $5, $6)`, [
+      kotId, p.tenantId, order.id, kotNo, requestHash, p.userId,
+    ]);
+    for (const l of lines) {
+      await tx.query(
+        `INSERT INTO order_lines (id, tenant_id, order_id, item_id, name, unit_price_paise, quantity, gst_rate_bp, line_subtotal_paise, line_tax_paise, kot_no)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [newId(), p.tenantId, order.id, l.itemId, l.item.name, l.item.price_paise, l.quantity, l.item.gst_rate_bp, l.lineSubtotal, l.lineTax, kotNo],
+      );
+    }
+    await enqueueEvent(tx, Topics.KotCreated, p.tenantId, order.id, {
+      kotId,
+      orderId: order.id,
+      outletId: order.outlet_id,
+      tableRef: order.table_ref,
+      kotNo,
+      lines: lines.map((l) => ({ itemId: l.itemId, name: l.item.name, quantity: l.quantity })),
+      createdBy: p.userId,
+    });
+  }
+
+  /** Bill totals are always recomputed from the stored lines, never patched incrementally. */
+  private async recomputeTotals(tx: Tx, orderId: string) {
+    const { rows } = await tx.query<{ subtotal: number; tax: number }>(
+      `SELECT COALESCE(SUM(line_subtotal_paise), 0)::bigint AS subtotal, COALESCE(SUM(line_tax_paise), 0)::bigint AS tax FROM order_lines WHERE order_id = $1`,
+      [orderId],
+    );
+    const { subtotal, tax } = rows[0]!;
+    const { cgstPaise, sgstPaise } = splitGst(tax);
+    const { roundedPaise, roundOffPaise } = roundToRupee(safeAdd(subtotal, cgstPaise, sgstPaise));
+    await tx.query(
+      `UPDATE orders SET subtotal_paise = $2, cgst_paise = $3, sgst_paise = $4, round_off_paise = $5, total_paise = $6, updated_at = now() WHERE id = $1`,
+      [orderId, subtotal, cgstPaise, sgstPaise, roundOffPaise, roundedPaise],
+    );
+  }
+
+  // ------------------------------------------------------------- tables & floor
+
+  async createTable(p: Principal, input: z.infer<typeof CreateTableInput>) {
+    assertOutletAccess(p, input.outletId);
+    const id = newId();
+    try {
+      await this.db.tx(
+        (tx) =>
+          tx.query(`INSERT INTO dining_tables (id, tenant_id, outlet_id, label, seats, sort_order) VALUES ($1, $2, $3, $4, $5, $6)`, [
+            id, p.tenantId, input.outletId, input.label, input.seats, input.sortOrder ?? 0,
+          ]),
+        { tenantId: p.tenantId },
+      );
+    } catch (err) {
+      if ((err as { code?: string }).code === '23505') throw new ConflictError('TABLE_EXISTS', `Table ${input.label} already exists`);
+      throw err;
+    }
+    return { id, ...input };
+  }
+
+  /**
+   * Everything a captain or cashier needs on the floor screen in one call:
+   * each table with its status, running amount, guests, time open and items.
+   */
+  async getFloor(p: Principal, outletId: string) {
+    assertOutletAccess(p, outletId);
+    return this.db.tx(
+      async (tx) => {
+        const { rows: tables } = await tx.query<{ label: string; seats: number }>(
+          'SELECT label, seats FROM dining_tables WHERE outlet_id = $1 AND is_active ORDER BY sort_order, label',
+          [outletId],
+        );
+        const { rows: open } = await tx.query<OrderRow & { committed: number; paying: boolean }>(
+          `SELECT o.*,
+                  COALESCE((SELECT SUM(CASE WHEN op.status = 'CAPTURED' THEN op.captured_paise - op.refunded_paise
+                                            WHEN op.status = 'PENDING' THEN op.amount_paise ELSE 0 END)
+                            FROM order_payments op WHERE op.order_id = o.id), 0)::bigint AS committed,
+                  EXISTS (SELECT 1 FROM order_payments op WHERE op.order_id = o.id AND op.status = 'PENDING') AS paying
+             FROM orders o WHERE o.outlet_id = $1 AND o.status = 'OPEN' AND o.table_ref IS NOT NULL`,
+          [outletId],
+        );
+        const ids = open.map((o) => o.id);
+        const { rows: items } = await tx.query<{ order_id: string; name: string; quantity: number }>(
+          `SELECT order_id, name, SUM(quantity)::int AS quantity FROM order_lines WHERE order_id = ANY($1::uuid[])
+            GROUP BY order_id, name ORDER BY MIN(kot_no), MIN(id::text)`,
+          [ids],
+        );
+        const { rows: today } = await tx.query<{ count: number; total: number }>(
+          `SELECT COUNT(*)::int AS count, COALESCE(SUM(total_paise), 0)::bigint AS total FROM orders
+            WHERE outlet_id = $1 AND status = 'SETTLED'
+              AND settled_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata')`,
+          [outletId],
+        );
+        const byTable = new Map(open.map((o) => [o.table_ref!, o]));
+        const floor = tables.map((t) => {
+          const o = byTable.get(t.label);
+          const status = !o ? 'FREE' : o.paying ? 'PAYING' : o.bill_requested_at ? 'BILL_REQUESTED' : 'OCCUPIED';
+          return {
+            label: t.label,
+            seats: t.seats,
+            status,
+            order: o && {
+              id: o.id,
+              guests: o.guests,
+              totalPaise: o.total_paise,
+              duePaise: Math.max(0, o.total_paise - o.committed),
+              kotCount: o.kot_count,
+              openedAt: o.created_at,
+              billRequestedAt: o.bill_requested_at,
+              items: items.filter((i) => i.order_id === o.id).map((i) => ({ name: i.name, quantity: i.quantity })),
+            },
+          };
+        });
+        return {
+          tables: floor,
+          summary: {
+            free: floor.filter((t) => t.status === 'FREE').length,
+            occupied: floor.filter((t) => t.status !== 'FREE').length,
+            billRequested: floor.filter((t) => t.status === 'BILL_REQUESTED').length,
+            runningPaise: open.reduce((s, o) => s + o.total_paise, 0),
+            settledTodayCount: today[0]!.count,
+            settledTodayPaise: today[0]!.total,
+          },
+        };
+      },
+      { tenantId: p.tenantId },
+    );
+  }
+
+  /** Recent kitchen tickets for the kitchen display. */
+  async listKots(p: Principal, outletId: string) {
+    assertOutletAccess(p, outletId);
+    return this.db.tx(
+      async (tx) =>
+        (
+          await tx.query(
+            `SELECT k.id, k.kot_no AS "kotNo", k.created_at AS "createdAt", k.created_by AS "createdBy", o.table_ref AS "tableRef", o.id AS "orderId",
+                    json_agg(json_build_object('name', l.name, 'quantity', l.quantity) ORDER BY l.id) AS lines
+               FROM kots k JOIN orders o ON o.id = k.order_id
+               JOIN order_lines l ON l.order_id = k.order_id AND l.kot_no = k.kot_no
+              WHERE o.outlet_id = $1
+              GROUP BY k.id, o.table_ref, o.id ORDER BY k.created_at DESC LIMIT 30`,
+            [outletId],
+          )
+        ).rows,
+      { tenantId: p.tenantId },
+    );
   }
 
   async getOrder(p: Principal, id: string) {
@@ -182,7 +407,7 @@ export class OrdersService {
         const order = await this.findOrder(tx, id);
         if (!order) throw new NotFoundError('Order');
         assertOutletAccess(p, order.outlet_id);
-        const { rows: lines } = await tx.query('SELECT item_id, name, unit_price_paise, quantity, gst_rate_bp, line_subtotal_paise, line_tax_paise FROM order_lines WHERE order_id = $1 ORDER BY id', [id]);
+        const { rows: lines } = await tx.query('SELECT item_id, name, unit_price_paise, quantity, gst_rate_bp, line_subtotal_paise, line_tax_paise, kot_no FROM order_lines WHERE order_id = $1 ORDER BY kot_no, id', [id]);
         const { rows: pays } = await tx.query<OrderPaymentRow>('SELECT * FROM order_payments WHERE order_id = $1 ORDER BY created_at', [id]);
         return this.view(order, lines, pays);
       },
@@ -418,6 +643,10 @@ export class OrdersService {
       outletId: o.outlet_id,
       channel: o.channel,
       tableRef: o.table_ref,
+      guests: o.guests,
+      kotCount: o.kot_count,
+      billRequestedAt: o.bill_requested_at,
+      openedAt: o.created_at,
       status: o.status,
       invoiceNo: o.invoice_no,
       subtotalPaise: o.subtotal_paise,
