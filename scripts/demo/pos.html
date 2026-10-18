@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Restaurant OS POS</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1b18; --muted: #6b665e; --line: #e4e0d8;
+    --accent: #c2410c; --accent-ink: #ffffff; --ok: #15803d; --warn: #b45309; --bad: #b91c1c; --chip: #f1eee8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151413; --panel: #1f1d1b; --ink: #f3f1ed; --muted: #a39d93; --line: #34312d;
+      --accent: #f97316; --accent-ink: #1b0f05; --ok: #4ade80; --warn: #fbbf24; --bad: #f87171; --chip: #2a2724; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 17px; margin: 0; }
+  header span { color: var(--muted); font-size: 13px; }
+  main { display: grid; grid-template-columns: 1.1fr 1fr 1.2fr; gap: 16px; padding: 16px 20px; }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
+  .menu { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+  .item { text-align: left; border: 1px solid var(--line); background: var(--chip); color: var(--ink); border-radius: 8px; padding: 10px; cursor: pointer; font: inherit; }
+  .item:hover { border-color: var(--accent); }
+  .item b { display: block; }
+  .item small { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 5px 0; border-bottom: 1px dashed var(--line); vertical-align: top; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.total td { font-weight: 700; border-bottom: none; font-size: 16px; padding-top: 8px; }
+  .qty button { width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--line); background: var(--chip); color: var(--ink); cursor: pointer; }
+  .btn { border: 0; border-radius: 8px; padding: 9px 14px; font: inherit; font-weight: 600; cursor: pointer; background: var(--accent); color: var(--accent-ink); }
+  .btn.ghost { background: var(--chip); color: var(--ink); border: 1px solid var(--line); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  input { font: inherit; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); width: 120px; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--chip); }
+  .s-OPEN, .s-PENDING { color: var(--warn); } .s-SETTLED, .s-CAPTURED, .s-SUCCEEDED { color: var(--ok); }
+  .s-FAILED, .s-CANCELLED { color: var(--bad); }
+  .empty { color: var(--muted); padding: 18px 0; text-align: center; }
+  .upi { margin-top: 10px; padding: 10px; border: 1px dashed var(--warn); border-radius: 8px; }
+  .log { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 340px; overflow: auto; }
+  .log div { padding: 6px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+  .log .t { color: var(--accent); font-weight: 700; }
+  .wide { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; background: none; border: 0; padding: 0; }
+  @media (max-width: 1000px) { .wide { grid-template-columns: 1fr; } }
+  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 8px; display: none; max-width: calc(100% - 32px); }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<header><h1>Restaurant OS · POS demo</h1><span>Table T4 · real Postgres + order &amp; payment services · fake Razorpay</span></header>
+<main>
+  <section>
+    <h2>Menu</h2>
+    <div class="menu" id="menu"></div>
+  </section>
+
+  <section>
+    <h2>Cart</h2>
+    <div id="cart"></div>
+    <div class="row"><button class="btn" id="place" disabled>Place order</button><button class="btn ghost" id="clear">Clear</button></div>
+  </section>
+
+  <section>
+    <h2>Bill &amp; payment</h2>
+    <div id="bill"><div class="empty">Place an order to see the bill.</div></div>
+  </section>
+
+  <div class="wide">
+    <section><h2>Events between services (outbox → bus → consumers)</h2><div class="log" id="events"></div></section>
+    <section><h2>Payment audit trail</h2><div class="log" id="audit"><div class="muted">Click “Audit” on a payment.</div></div></section>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const inr = (p) => (p < 0 ? '-' : '') + '₹' + (Math.abs(p) / 100).toFixed(2);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+let cfg, order = null;
+const cart = new Map();
+
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => (t.style.display = 'none'), 3500); }
+
+async function api(base, method, path, { body, role = 'cashier', key } = {}) {
+  const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + cfg.tokens[role] };
+  if (key) headers['idempotency-key'] = key;
+  const res = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error?.message || ('HTTP ' + res.status));
+  return data;
+}
+
+function renderMenu() {
+  $('menu').innerHTML = cfg.menu.map((m) => `<button class="item" data-id="${m.id}"><b>${esc(m.name)}</b><small>${inr(m.pricePaise)} · GST ${m.gstRateBp / 100}%</small></button>`).join('');
+  $('menu').onclick = (e) => { const b = e.target.closest('.item'); if (!b) return; cart.set(b.dataset.id, (cart.get(b.dataset.id) || 0) + 1); renderCart(); };
+}
+
+function renderCart() {
+  if (!cart.size) { $('cart').innerHTML = '<div class="empty">Tap menu items to add them.</div>'; $('place').disabled = true; return; }
+  let est = 0;
+  const rows = [...cart].map(([id, q]) => { const m = cfg.menu.find((x) => x.id === id); est += m.pricePaise * q;
+    return `<tr><td>${esc(m.name)}</td><td class="qty"><button data-d="-1" data-id="${id}">−</button> ${q} <button data-d="1" data-id="${id}">+</button></td><td class="num">${inr(m.pricePaise * q)}</td></tr>`; }).join('');
+  $('cart').innerHTML = `<table>${rows}<tr><td class="muted">Before tax (server calculates the bill)</td><td></td><td class="num">${inr(est)}</td></tr></table>`;
+  $('place').disabled = false;
+}
+$('cart').onclick = (e) => { const b = e.target.closest('button[data-d]'); if (!b) return; const q = (cart.get(b.dataset.id) || 0) + Number(b.dataset.d); q > 0 ? cart.set(b.dataset.id, q) : cart.delete(b.dataset.id); renderCart(); };
+$('clear').onclick = () => { cart.clear(); renderCart(); };
+
+$('place').onclick = async () => {
+  $('place').disabled = true;
+  try {
+    order = await api(cfg.orderUrl, 'POST', '/orders', { body: { id: crypto.randomUUID(), outletId: cfg.outletId, channel: 'DINE_IN', tableRef: 'T4', lines: [...cart].map(([itemId, quantity]) => ({ itemId, quantity })) } });
+    location.hash = 'order=' + order.id; // survives page reloads
+    cart.clear(); renderCart(); renderBill();
+  } catch (e) { toast(e.message); $('place').disabled = false; }
+};
+
+let pendingCheckout = {};
+function renderBill() {
+  if (!order) return;
+  const o = order;
+  const lines = o.lines.map((l) => `<tr><td>${esc(l.name)} × ${l.quantity}</td><td class="num">${inr(l.line_subtotal_paise)}</td></tr>`).join('');
+  const pays = o.payments.map((p) => `<tr><td>${p.method} <span class="pill s-${p.status}">${p.status}</span>${p.refundedPaise ? ` <span class="muted">refunded ${inr(p.refundedPaise)}</span>` : ''}</td>
+      <td class="num">${inr(p.amountPaise)}<br>
+      ${p.status === 'CAPTURED' && p.capturedPaise > p.refundedPaise ? `<button class="btn ghost" data-refund="${p.paymentId}">Refund</button> ` : ''}
+      ${p.status === 'PENDING' ? `<button class="btn ghost" data-cancel="${p.paymentId}">Cancel</button> ` : ''}
+      <button class="btn ghost" data-audit="${p.paymentId}">Audit</button></td></tr>`).join('');
+  const pendingUpi = o.payments.find((p) => p.status === 'PENDING' && pendingCheckout[p.paymentId]);
+  $('bill').innerHTML = `
+    <div class="row" style="margin:0 0 8px;justify-content:space-between"><span>Order <span class="pill s-${o.status}">${o.status}</span></span>
+      <span class="muted">${o.invoiceNo ? 'Invoice ' + esc(o.invoiceNo) : 'No invoice yet'}</span></div>
+    <table>${lines}
+      <tr><td class="muted">Subtotal</td><td class="num">${inr(o.subtotalPaise)}</td></tr>
+      <tr><td class="muted">CGST 2.5%</td><td class="num">${inr(o.cgstPaise)}</td></tr>
+      <tr><td class="muted">SGST 2.5%</td><td class="num">${inr(o.sgstPaise)}</td></tr>
+      <tr><td class="muted">Round off</td><td class="num">${inr(o.roundOffPaise)}</td></tr>
+      <tr class="total"><td>Total</td><td class="num">${inr(o.totalPaise)}</td></tr>
+      <tr><td class="muted">Paid (net of refunds)</td><td class="num">${inr(o.paidPaise)}</td></tr>
+      <tr><td class="muted">Due</td><td class="num">${inr(o.duePaise)}</td></tr>
+      ${o.overpaidPaise ? `<tr><td style="color:var(--bad)">Overpaid: refund customer</td><td class="num" style="color:var(--bad)">${inr(o.overpaidPaise)}</td></tr>` : ''}
+    </table>
+    ${o.status === 'OPEN' && o.duePaise > 0 ? `<div class="row">
+      <button class="btn" data-pay="CASH">Cash ${inr(o.duePaise)}</button>
+      <button class="btn" data-pay="UPI">UPI ${inr(o.duePaise)}</button></div>
+      <div class="row"><input id="part" type="number" min="1" step="0.01" placeholder="₹ amount"><button class="btn ghost" data-pay="CASH" data-part="1">Part cash</button></div>` : ''}
+    ${pendingUpi ? `<div class="upi"><b>UPI QR shown to customer</b><div class="muted">Razorpay order ${esc(pendingCheckout[pendingUpi.paymentId].gatewayOrderId)}</div>
+      <div class="row"><button class="btn" data-sim="${pendingUpi.paymentId}" data-ok="1">Customer pays</button><button class="btn ghost" data-sim="${pendingUpi.paymentId}" data-ok="0">Payment fails</button></div></div>` : ''}
+    ${o.payments.length ? `<h2 style="margin-top:14px">Payments</h2><table>${pays}</table>` : ''}
+    ${o.status !== 'OPEN' ? `<div class="row"><button class="btn ghost" id="neworder">New order</button></div>` : ''}`;
+}
+
+$('bill').onclick = async (e) => {
+  const t = e.target.closest('button'); if (!t) return;
+  try {
+    if (t.dataset.pay) {
+      let amountPaise;
+      if (t.dataset.part) { amountPaise = Math.round(Number($('part').value) * 100); if (!(amountPaise > 0)) return toast('Enter an amount'); }
+      const r = await api(cfg.orderUrl, 'POST', `/orders/${order.id}/payments`, { body: { method: t.dataset.pay, amountPaise }, key: crypto.randomUUID() });
+      if (r.checkout) pendingCheckout[r.paymentId] = r.checkout;
+      toast(`${t.dataset.pay} payment ${r.status.toLowerCase()}`);
+    } else if (t.dataset.sim) {
+      const ok = t.dataset.ok === '1';
+      await fetch('/demo/simulate-upi', { method: 'POST', body: JSON.stringify({ gatewayOrderId: pendingCheckout[t.dataset.sim].gatewayOrderId, succeed: ok }) });
+      toast(ok ? 'Signed webhook sent: payment captured' : 'Attempt failed; customer can retry or you can cancel');
+    } else if (t.dataset.cancel) {
+      await api(cfg.orderUrl, 'POST', `/orders/${order.id}/payments/${t.dataset.cancel}/cancel`);
+      toast('Payment cancelled');
+    } else if (t.dataset.refund) {
+      const amt = prompt('Refund amount in ₹ (manager/owner only)');
+      if (!amt) return;
+      const r = await api(cfg.paymentUrl, 'POST', `/payments/${t.dataset.refund}/refunds`, { role: 'owner', key: crypto.randomUUID(), body: { amountPaise: Math.round(Number(amt) * 100), reason: 'Customer complaint' } });
+      toast('Refund ' + r.status.toLowerCase());
+    } else if (t.dataset.audit) {
+      const rows = await (await fetch('/demo/audit?paymentId=' + t.dataset.audit)).json();
+      $('audit').innerHTML = rows.map((r) => `<div><span class="t">${esc(r.action)}</span> ${esc(r.from_status ?? '')} → ${esc(r.to_status ?? '')} · ${esc(r.actor)}<br><span class="muted">${new Date(r.at).toLocaleTimeString()} ${esc(JSON.stringify(r.detail))}</span></div>`).join('') || '<div class="muted">No entries</div>';
+    } else if (t.id === 'neworder') { order = null; history.replaceState(null, '', location.pathname); $('bill').innerHTML = '<div class="empty">Place an order to see the bill.</div>'; return; }
+    await refresh(true);
+  } catch (err) { toast(err.message); }
+};
+
+// Polls for changes made by other services (webhooks, events) and redraws only
+// when something actually changed, so typing and clicking are never interrupted.
+let lastOrderJson = '', lastEventsJson = '';
+async function refresh(force = false) {
+  if (order) {
+    try {
+      const fresh = await api(cfg.orderUrl, 'GET', `/orders/${order.id}`);
+      // After a reload, recover the UPI checkout details from the payment service.
+      for (const p of fresh.payments) {
+        if (p.status === 'PENDING' && p.method !== 'CASH' && !pendingCheckout[p.paymentId]) {
+          const remote = await api(cfg.paymentUrl, 'GET', `/payments/${p.paymentId}`);
+          if (remote.checkout) { pendingCheckout[p.paymentId] = remote.checkout; force = true; }
+        }
+      }
+      const j = JSON.stringify(fresh);
+      if (force || j !== lastOrderJson) { lastOrderJson = j; order = fresh; renderBill(); }
+    } catch {}
+  }
+  let ev;
+  try { ev = await (await fetch('/demo/events')).json(); } catch { return; } // server restarting: try again next tick
+  const ej = JSON.stringify(ev);
+  if (ej !== lastEventsJson) {
+    lastEventsJson = ej;
+    $('events').innerHTML = ev.map((e) => `<div><span class="t">${esc(e.type)}</span> <span class="muted">${new Date(e.occurredAt).toLocaleTimeString()}</span><br>${esc(JSON.stringify(e.payload))}</div>`).join('') || '<div class="muted">No events yet.</div>';
+  }
+}
+
+(async () => {
+  cfg = await (await fetch('/demo/config')).json();
+  renderMenu(); renderCart();
+  const saved = /order=([0-9a-f-]{36})/.exec(location.hash);
+  if (saved) order = { id: saved[1] };
+  refresh(true);
+  setInterval(() => refresh(), 1500);
+})();
+</script>
+</body>
+</html>

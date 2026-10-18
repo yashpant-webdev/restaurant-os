@@ -14,7 +14,8 @@
     "typecheck": "tsc -b packages/contracts packages/common services/payment services/order-pos --noEmit false",
     "test": "jest --runInBand",
     "test:unit": "jest --runInBand --selectProjects unit",
-    "test:int": "jest --runInBand --selectProjects integration"
+    "test:int": "jest --runInBand --selectProjects integration",
+    "demo": "npm run build && node scripts/demo/run.mjs"
   },
   "devDependencies": {
     "@swc/core": "^1.16.18",

@@ -28,6 +28,23 @@ tests/e2e            both services together: order → pay → settle → refund
 infra/docker         local Postgres, Redpanda, Redis, Keycloak
 ```
 
+## See it running (no Docker needed)
+
+```bash
+npm install --cache /tmp/npm-cache
+```
+
+```bash
+npm run demo
+```
+
+Open http://localhost:4000. Tap menu items, place the order, then pay by cash, by UPI (press "Customer pays" to act as the customer's phone), or split between the two. The page shows:
+- the server-calculated GST bill and invoice number;
+- the events flowing between the order and payment services;
+- the payment audit trail.
+
+Refunds are available from the Refund button, using an owner token. Each run uses a fresh temporary database.
+
 ## Run the tests
 
 ```bash
