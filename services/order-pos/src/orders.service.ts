@@ -7,6 +7,7 @@ import {
   ConflictError,
   Database,
   enqueueEvent,
+  formatInr,
   Logger,
   LOGGER,
   newId,
@@ -24,6 +25,7 @@ import {
   ValidationError,
 } from '@ros/common';
 import { PaymentClient, PaymentRejected } from './payment-client';
+import { Actor, activeCaptain, recordActivity, resolveActor } from './staff';
 
 export const APP_DB = Symbol('APP_DB');
 export const RELAY = Symbol('RELAY');
@@ -59,6 +61,8 @@ export const CreateOrderInput = z
     channel: z.enum(['DINE_IN', 'TAKEAWAY', 'DELIVERY']),
     tableRef: z.string().trim().min(1).max(20).optional(),
     guests: z.number().int().min(1).max(50).optional(),
+    /** When a cashier/manager opens a table for a captain. A captain opening a table owns it automatically. */
+    captainId: z.string().uuid().optional(),
     lines: z.array(LineInput).min(1).max(200),
   })
   .strict()
@@ -71,6 +75,8 @@ export const AddItemsInput = z
     lines: z.array(LineInput).min(1).max(100),
   })
   .strict();
+
+export const AssignCaptainInput = z.object({ captainId: z.string().uuid() }).strict();
 
 export const CreateTableInput = z
   .object({
@@ -112,6 +118,8 @@ interface OrderRow {
   customer_name: string | null;
   marketing_consent: boolean;
   created_by: string;
+  captain_id: string | null;
+  captain_name: string | null;
   created_at: Date;
   settled_at: Date | null;
 }
@@ -138,6 +146,7 @@ export function financialYear(d: Date): string {
   return `${String(start % 100).padStart(2, '0')}${String((start + 1) % 100).padStart(2, '0')}`;
 }
 
+const itemsText = (lines: PricedLine[]) => lines.map((l) => `${l.quantity}× ${l.item.name}`).join(', ');
 const hashOf = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
 
 @Injectable()
@@ -164,6 +173,21 @@ export class OrdersService {
     return { id, ...input };
   }
 
+  async listMenu(p: Principal, outletId: string) {
+    assertOutletAccess(p, outletId);
+    return this.db.tx(
+      async (tx) =>
+        (
+          await tx.query(
+            `SELECT id, outlet_id AS "outletId", name, price_paise AS "pricePaise", gst_rate_bp AS "gstRateBp", cost_paise AS "costPaise", category
+               FROM menu_items WHERE outlet_id = $1 AND is_active ORDER BY category NULLS LAST, name`,
+            [outletId],
+          )
+        ).rows,
+      { tenantId: p.tenantId },
+    );
+  }
+
   // ------------------------------------------------------------- orders
 
   /**
@@ -184,16 +208,23 @@ export class OrdersService {
             if (existing.request_hash !== requestHash) throw new ConflictError('IDEMPOTENCY_MISMATCH', 'Order id already used with different content');
             return false;
           }
+          const actor = await resolveActor(tx, p);
+          const captain = actor.captain ?? (input.captainId ? await activeCaptain(tx, input.outletId, input.captainId) : null);
           const priced = await this.priceLines(tx, input.outletId, input.lines);
           const { rowCount } = await tx.query(
             `INSERT INTO orders (id, tenant_id, outlet_id, channel, table_ref, guests, status, request_hash,
-                                 subtotal_paise, cgst_paise, sgst_paise, round_off_paise, total_paise, kot_count, created_by)
-             VALUES ($1, $2, $3, $4, $5, $6, 'OPEN', $7, 0, 0, 0, 0, 0, 1, $8) ON CONFLICT (id) DO NOTHING`,
-            [input.id, p.tenantId, input.outletId, input.channel, input.tableRef ?? null, input.guests ?? null, requestHash, p.userId],
+                                 subtotal_paise, cgst_paise, sgst_paise, round_off_paise, total_paise, kot_count, created_by, captain_id, captain_name)
+             VALUES ($1, $2, $3, $4, $5, $6, 'OPEN', $7, 0, 0, 0, 0, 0, 1, $8, $9, $10) ON CONFLICT (id) DO NOTHING`,
+            [input.id, p.tenantId, input.outletId, input.channel, input.tableRef ?? null, input.guests ?? null, requestHash, actor.id, captain?.id ?? null, captain?.name ?? null],
           );
           if (!rowCount) throw new ConflictError('ORDER_ID_TAKEN', 'Concurrent request with the same order id; retry');
-          await this.insertKot(tx, p, { id: input.id, outlet_id: input.outletId, table_ref: input.tableRef ?? null }, newId(), 1, priced, requestHash);
+          await this.insertKot(tx, p, actor, { id: input.id, outlet_id: input.outletId, table_ref: input.tableRef ?? null }, newId(), 1, priced, requestHash);
           await this.recomputeTotals(tx, input.id);
+          const where = input.tableRef ? `${input.tableRef}${input.guests ? ` (${input.guests} guests)` : ''}` : `a ${input.channel.toLowerCase().replace('_', '-')} order`;
+          await recordActivity(tx, p.tenantId, {
+            outletId: input.outletId, kind: 'TABLE_OPENED', actor, orderId: input.id, tableRef: input.tableRef ?? null, captainId: captain?.id,
+            message: `${actor.name} opened ${where}${captain && captain.id !== actor.id ? ` for captain ${captain.name}` : ''} and sent KOT #1: ${itemsText(priced)}`,
+          });
           return true;
         },
         { tenantId: p.tenantId },
@@ -228,11 +259,16 @@ export class OrdersService {
         if (order.status !== 'OPEN') throw new ConflictError('ORDER_NOT_OPEN', `Order is ${order.status}`);
         const { rows: busy } = await tx.query(`SELECT 1 FROM order_payments WHERE order_id = $1 AND status IN ('PENDING','CAPTURED') LIMIT 1`, [orderId]);
         if (busy.length) throw new ConflictError('BILL_LOCKED', 'Payment has started on this bill; finish or cancel it before adding items');
+        const actor = await resolveActor(tx, p);
         const priced = await this.priceLines(tx, order.outlet_id, input.lines);
         const kotNo = order.kot_count + 1;
-        await this.insertKot(tx, p, order, input.kotId, kotNo, priced, requestHash);
+        await this.insertKot(tx, p, actor, order, input.kotId, kotNo, priced, requestHash);
         await tx.query('UPDATE orders SET kot_count = $2, bill_requested_at = NULL, updated_at = now() WHERE id = $1', [orderId, kotNo]);
         await this.recomputeTotals(tx, orderId);
+        await recordActivity(tx, p.tenantId, {
+          outletId: order.outlet_id, kind: 'KOT_SENT', actor, orderId, tableRef: order.table_ref, captainId: order.captain_id,
+          message: `${actor.name} sent KOT #${kotNo} for ${order.table_ref ?? 'order'}: ${itemsText(priced)}`,
+        });
       },
       { tenantId: p.tenantId },
     );
@@ -247,10 +283,17 @@ export class OrdersService {
         const order = await this.lockOrder(tx, orderId);
         assertOutletAccess(p, order.outlet_id);
         if (order.status !== 'OPEN') throw new ConflictError('ORDER_NOT_OPEN', `Order is ${order.status}`);
-        await tx.query('UPDATE orders SET bill_requested_at = COALESCE(bill_requested_at, now()), updated_at = now() WHERE id = $1', [orderId]);
+        const actor = await resolveActor(tx, p);
+        if (order.bill_requested_at) return; // already requested: no duplicate notification
+        await tx.query('UPDATE orders SET bill_requested_at = now(), updated_at = now() WHERE id = $1', [orderId]);
+        await recordActivity(tx, p.tenantId, {
+          outletId: order.outlet_id, kind: 'BILL_REQUESTED', actor, orderId, tableRef: order.table_ref, captainId: order.captain_id,
+          message: `${actor.name} requested the bill for ${order.table_ref ?? 'order'} (${formatInr(order.total_paise)})`,
+        });
       },
       { tenantId: p.tenantId },
     );
+    this.relay.nudge();
     return this.getOrder(p, orderId);
   }
 
@@ -261,12 +304,40 @@ export class OrdersService {
         const order = await this.lockOrder(tx, orderId);
         assertOutletAccess(p, order.outlet_id);
         if (order.status !== 'OPEN') throw new ConflictError('ORDER_NOT_OPEN', `Order is ${order.status}`);
+        const actor = await resolveActor(tx, p);
         await tx.query('UPDATE orders SET customer_phone = $2, customer_name = $3, marketing_consent = $4, updated_at = now() WHERE id = $1', [
           orderId, input.phone, input.name ?? null, input.marketingConsent,
         ]);
+        await recordActivity(tx, p.tenantId, {
+          outletId: order.outlet_id, kind: 'CUSTOMER_ADDED', actor, orderId, tableRef: order.table_ref, captainId: order.captain_id,
+          message: `${actor.name} added guest ${input.name ?? ''} (••••${input.phone.slice(-4)}) to ${order.table_ref ?? 'order'}`.replace('  ', ' '),
+        });
       },
       { tenantId: p.tenantId },
     );
+    this.relay.nudge();
+    return this.getOrder(p, orderId);
+  }
+
+  /** Cashier/manager moves a table to another captain (shift change, captain going home). */
+  async assignCaptain(p: Principal, orderId: string, input: z.infer<typeof AssignCaptainInput>) {
+    await this.db.tx(
+      async (tx) => {
+        const order = await this.lockOrder(tx, orderId);
+        assertOutletAccess(p, order.outlet_id);
+        if (order.status !== 'OPEN') throw new ConflictError('ORDER_NOT_OPEN', `Order is ${order.status}`);
+        const actor = await resolveActor(tx, p);
+        const to = await activeCaptain(tx, order.outlet_id, input.captainId);
+        if (to.id === order.captain_id) return;
+        await tx.query('UPDATE orders SET captain_id = $2, captain_name = $3, updated_at = now() WHERE id = $1', [orderId, to.id, to.name]);
+        await recordActivity(tx, p.tenantId, {
+          outletId: order.outlet_id, kind: 'TABLE_TRANSFERRED', actor, orderId, tableRef: order.table_ref, captainId: to.id,
+          message: `${actor.name} moved ${order.table_ref ?? 'order'} ${order.captain_name ? `from ${order.captain_name} ` : ''}to ${to.name}`,
+        });
+      },
+      { tenantId: p.tenantId },
+    );
+    this.relay.nudge();
     return this.getOrder(p, orderId);
   }
 
@@ -286,9 +357,9 @@ export class OrdersService {
     });
   }
 
-  private async insertKot(tx: Tx, p: Principal, order: { id: string; outlet_id: string; table_ref: string | null }, kotId: string, kotNo: number, lines: PricedLine[], requestHash: string) {
+  private async insertKot(tx: Tx, p: Principal, actor: Actor, order: { id: string; outlet_id: string; table_ref: string | null }, kotId: string, kotNo: number, lines: PricedLine[], requestHash: string) {
     await tx.query(`INSERT INTO kots (id, tenant_id, order_id, kot_no, request_hash, created_by) VALUES ($1, $2, $3, $4, $5, $6)`, [
-      kotId, p.tenantId, order.id, kotNo, requestHash, p.userId,
+      kotId, p.tenantId, order.id, kotNo, requestHash, actor.name,
     ]);
     for (const l of lines) {
       await tx.query(
@@ -304,7 +375,7 @@ export class OrdersService {
       tableRef: order.table_ref,
       kotNo,
       lines: lines.map((l) => ({ itemId: l.itemId, name: l.item.name, quantity: l.quantity })),
-      createdBy: p.userId,
+      createdBy: actor.name,
     });
   }
 
@@ -387,6 +458,7 @@ export class OrdersService {
             order: o && {
               id: o.id,
               guests: o.guests,
+              captain: o.captain_id ? { id: o.captain_id, name: o.captain_name } : null,
               totalPaise: o.total_paise,
               duePaise: Math.max(0, o.total_paise - o.committed),
               kotCount: o.kot_count,
@@ -419,12 +491,12 @@ export class OrdersService {
       async (tx) =>
         (
           await tx.query(
-            `SELECT k.id, k.kot_no AS "kotNo", k.created_at AS "createdAt", k.created_by AS "createdBy", o.table_ref AS "tableRef", o.id AS "orderId",
+            `SELECT k.id, k.kot_no AS "kotNo", k.created_at AS "createdAt", k.created_by AS "createdBy", o.table_ref AS "tableRef", o.id AS "orderId", o.captain_name AS "captainName",
                     json_agg(json_build_object('name', l.name, 'quantity', l.quantity) ORDER BY l.id) AS lines
                FROM kots k JOIN orders o ON o.id = k.order_id
                JOIN order_lines l ON l.order_id = k.order_id AND l.kot_no = k.kot_no
               WHERE o.outlet_id = $1
-              GROUP BY k.id, o.table_ref, o.id ORDER BY k.created_at DESC LIMIT 30`,
+              GROUP BY k.id, o.table_ref, o.id, o.captain_name ORDER BY k.created_at DESC LIMIT 30`,
             [outletId],
           )
         ).rows,
@@ -456,9 +528,15 @@ export class OrdersService {
         const { rows } = await tx.query(`SELECT 1 FROM order_payments WHERE order_id = $1 AND status IN ('PENDING','CAPTURED')`, [id]);
         if (rows.length) throw new ConflictError('HAS_PAYMENTS', 'Cancel or refund payments before cancelling the order');
         await tx.query(`UPDATE orders SET status = 'CANCELLED', updated_at = now() WHERE id = $1`, [id]);
+        const actor = await resolveActor(tx, p);
+        await recordActivity(tx, p.tenantId, {
+          outletId: order.outlet_id, kind: 'ORDER_CANCELLED', actor, orderId: id, tableRef: order.table_ref, captainId: order.captain_id,
+          message: `${actor.name} cancelled the order on ${order.table_ref ?? 'order'} (${formatInr(order.total_paise)})`,
+        });
       },
       { tenantId: p.tenantId },
     );
+    this.relay.nudge();
     return this.getOrder(p, id);
   }
 
@@ -495,6 +573,11 @@ export class OrdersService {
            VALUES ($1, $2, $3, $4, $5, $6, 'PENDING') RETURNING *`,
           [newId(), p.tenantId, orderId, idempotencyKey, input.method, amount],
         );
+        const actor = await resolveActor(tx, p);
+        await recordActivity(tx, p.tenantId, {
+          outletId: order.outlet_id, kind: 'PAYMENT_STARTED', actor, orderId, tableRef: order.table_ref, captainId: order.captain_id,
+          message: `${actor.name} is collecting ${input.method} ${formatInr(amount)} for ${order.table_ref ?? 'order'}`,
+        });
         return { row: rows[0]!, order };
       },
       { tenantId: p.tenantId },
@@ -619,6 +702,8 @@ export class OrdersService {
         guests: order.guests,
         openedAt: order.created_at.toISOString(),
         createdBy: order.created_by,
+        captainId: order.captain_id,
+        captainName: order.captain_name,
         customer: order.customer_phone ? { phone: order.customer_phone, name: order.customer_name, marketingConsent: order.marketing_consent } : null,
         lines: (
           await tx.query<{ item_id: string; name: string; quantity: number; gst_rate_bp: number; line_subtotal_paise: number; line_tax_paise: number; unit_cost_paise: number | null }>(
@@ -636,6 +721,10 @@ export class OrdersService {
         })),
       };
       await enqueueEvent(tx, Topics.OrderSettled, tenantId, orderId, payload);
+      await recordActivity(tx, tenantId, {
+        outletId: order.outlet_id, kind: 'ORDER_SETTLED', actor: { id: 'system', name: 'Payments', captain: null }, orderId, tableRef: order.table_ref, captainId: order.captain_id,
+        message: `${order.table_ref ?? 'Order'} paid ${formatInr(paid)} · invoice ${invoiceNo}${order.table_ref ? ' · table is free' : ''}`,
+      });
     }
     if (excess > order.overpaid_paise) {
       this.log.error({ orderId, excess }, 'order overpaid; refund required');
@@ -695,6 +784,7 @@ export class OrdersService {
       channel: o.channel,
       tableRef: o.table_ref,
       guests: o.guests,
+      captain: o.captain_id ? { id: o.captain_id, name: o.captain_name } : null,
       customer: o.customer_phone ? { phone: o.customer_phone, name: o.customer_name, marketingConsent: o.marketing_consent } : null,
       kotCount: o.kot_count,
       billRequestedAt: o.bill_requested_at,

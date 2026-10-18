@@ -5,7 +5,8 @@ import { Database, InMemoryEventBus, OutboxRelay } from '@ros/common';
 import { call, freshServiceDb, JWT, log, newBus, relay as makeRelay, startApp, token, verifier, waitFor } from '../support/harness';
 import { PaymentModule } from '../../services/payment/src/app.module';
 import { FakeGateway } from '../../services/payment/src/gateway/fake';
-import { OrderModule, registerPaymentConsumers } from '../../services/order-pos/src/app.module';
+import { OrderModule, registerLiveFeed, registerPaymentConsumers } from '../../services/order-pos/src/app.module';
+import { LiveHub } from '../../services/order-pos/src/live';
 import { OrdersService } from '../../services/order-pos/src/orders.service';
 import { DevServiceTokenProvider, PaymentClient } from '../../services/order-pos/src/payment-client';
 import { registerProjections } from '../../services/analytics/src/projections';
@@ -52,6 +53,7 @@ beforeAll(async () => {
   const payments = new PaymentClient(pay.url, new DevServiceTokenProvider(JWT), log);
   const oapp = await startApp(OrderModule.register({ log, appDb: odb.appDb, relay: orelay, payments, verifier: verifier(), rateLimitPerMinute: 10_000 }));
   await registerPaymentConsumers(bus, odb.appDb, log, oapp.app.get(OrdersService));
+  await registerLiveFeed(bus, oapp.app.get(LiveHub), 'test');
   ord = { ...oapp, ...odb, relay: orelay };
 
   analytics = await freshServiceDb('analytics');
@@ -194,8 +196,13 @@ describe('dine-in table flow: captain → kitchen → cashier', () => {
   const floor = async () => (await call(ord.url, 'GET', `/floor?outletId=${OUTLET}`, { token: cashier })).body;
   const table = async (label: string) => (await floor()).tables.find((t: { label: string }) => t.label === label);
 
+  let raviId: string;
   beforeAll(async () => {
-    captain = await token({ tid: TENANT, roles: ['captain'], outlets: [OUTLET], sub: 'captain-ravi' });
+    // The cashier registers captain Ravi; his phone's token carries his staff id.
+    const ravi = await call(ord.url, 'POST', '/staff', { token: cashier, body: { outletId: OUTLET, name: 'Ravi' } });
+    expect(ravi.status).toBe(201);
+    raviId = ravi.body.id;
+    captain = await token({ tid: TENANT, roles: ['captain'], outlets: [OUTLET], sub: raviId });
     for (const [label, seats] of [['T1', 2], ['T2', 4], ['T3', 6]] as const) {
       expect((await call(ord.url, 'POST', '/tables', { token: owner, body: { outletId: OUTLET, label, seats } })).status).toBe(201);
     }
@@ -214,7 +221,7 @@ describe('dine-in table flow: captain → kitchen → cashier', () => {
     });
     expect(open.status).toBe(201);
     let t1 = await table('T1');
-    expect(t1).toMatchObject({ status: 'OCCUPIED', order: { id: orderId, guests: 2, totalPaise: 62_800, kotCount: 1, items: [{ name: 'Chicken Biryani', quantity: 2 }] } });
+    expect(t1).toMatchObject({ status: 'OCCUPIED', order: { id: orderId, guests: 2, totalPaise: 62_800, kotCount: 1, captain: { id: raviId, name: 'Ravi' }, items: [{ name: 'Chicken Biryani', quantity: 2 }] } });
 
     // A second captain can't open the same table.
     const clash = await call(ord.url, 'POST', '/orders', {
@@ -236,6 +243,7 @@ describe('dine-in table flow: captain → kitchen → cashier', () => {
     await waitFor(async () => kots.filter((e) => e.key === orderId).length === 2);
     const kds = (await call(ord.url, 'GET', `/kots?outletId=${OUTLET}`, { token: cashier })).body;
     expect(kds.filter((k: { orderId: string }) => k.orderId === orderId).map((k: { kotNo: number }) => k.kotNo).sort()).toEqual([1, 2]);
+    expect(kds.find((k: { orderId: string }) => k.orderId === orderId)).toMatchObject({ captainName: 'Ravi', createdBy: 'Ravi' });
 
     // Guest shares their number for the WhatsApp bill and loyalty.
     const withCustomer = await call(ord.url, 'POST', `/orders/${orderId}/customer`, { token: captain, body: { phone: '9123456780', name: 'Arjun', marketingConsent: true } });
@@ -264,6 +272,8 @@ describe('dine-in table flow: captain → kitchen → cashier', () => {
     await waitFor(async () => (await analytics.workerDb.query('SELECT 1 FROM fact_orders WHERE order_id = $1', [orderId])).length === 1);
     const lines = await analytics.workerDb.query('SELECT name, quantity, net_paise FROM fact_order_lines WHERE order_id = $1 ORDER BY line_no', [orderId]);
     expect(lines).toEqual([{ name: 'Chicken Biryani', quantity: 2, net_paise: 59_800 }, { name: 'Sweet Lassi', quantity: 2, net_paise: 17_900 }]);
+    const [fact] = await analytics.workerDb.query('SELECT captain_id, captain_name FROM fact_orders WHERE order_id = $1', [orderId]);
+    expect(fact).toEqual({ captain_id: raviId, captain_name: 'Ravi' });
     const [guest] = await analytics.workerDb.query('SELECT visits, spend_paise FROM customers WHERE phone = $1', ['9123456780']);
     expect(guest).toEqual({ visits: 1, spend_paise: 81_600 });
 
@@ -281,6 +291,72 @@ describe('dine-in table flow: captain → kitchen → cashier', () => {
       body: { id: randomUUID(), outletId: OUTLET, channel: 'DINE_IN', lines: [{ itemId: lassi, quantity: 1 }] },
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('captains: management, ownership and the live feed', () => {
+  const staff = async () => (await call(ord.url, 'GET', `/staff?outletId=${OUTLET}`, { token: cashier })).body;
+
+  it('cashier manages captains; removal is blocked while they own open tables; removed captains are locked out', async () => {
+    const meena = (await call(ord.url, 'POST', '/staff', { token: cashier, body: { outletId: OUTLET, name: 'Meena' } })).body;
+    const sunil = (await call(ord.url, 'POST', '/staff', { token: cashier, body: { outletId: OUTLET, name: 'Sunil' } })).body;
+    expect((await call(ord.url, 'POST', '/staff', { token: cashier, body: { outletId: OUTLET, name: 'meena' } })).body.error.code).toBe('STAFF_NAME_TAKEN');
+    expect((await call(ord.url, 'POST', '/staff', { token: cashier, body: { outletId: OUTLET, name: 'Raj', role: 'CASHIER' } })).status).toBe(403);
+    const meenaPhone = await token({ tid: TENANT, roles: ['captain'], outlets: [OUTLET], sub: meena.id });
+    expect((await call(ord.url, 'POST', '/staff', { token: meenaPhone, body: { outletId: OUTLET, name: 'X' } })).status).toBe(403);
+
+    // Meena opens T2: it is hers.
+    const orderId = randomUUID();
+    await call(ord.url, 'POST', '/tables', { token: owner, body: { outletId: OUTLET, label: 'T7', seats: 4 } });
+    expect((await call(ord.url, 'POST', '/orders', { token: meenaPhone, body: { id: orderId, outletId: OUTLET, channel: 'DINE_IN', tableRef: 'T7', guests: 2, lines: [{ itemId: lassi, quantity: 1 }] } })).status).toBe(201);
+    expect((await staff()).find((x: { id: string }) => x.id === meena.id)).toMatchObject({ openTables: 1, tables: ['T7'] });
+
+    // Can't remove her while T7 is open; move T7 to Sunil, then remove.
+    const blocked = await call(ord.url, 'DELETE', `/staff/${meena.id}`, { token: cashier });
+    expect(blocked.body.error).toMatchObject({ code: 'CAPTAIN_HAS_OPEN_TABLES', details: { tables: ['T7'] } });
+    const moved = await call(ord.url, 'POST', `/orders/${orderId}/captain`, { token: cashier, body: { captainId: sunil.id } });
+    expect(moved.body.captain).toEqual({ id: sunil.id, name: 'Sunil' });
+    expect((await call(ord.url, 'DELETE', `/staff/${meena.id}`, { token: cashier })).status).toBe(200);
+
+    // Her phone stops working at once, even though her token hasn't expired.
+    const after = await call(ord.url, 'POST', `/orders/${orderId}/items`, { token: meenaPhone, body: { kotId: randomUUID(), lines: [{ itemId: lassi, quantity: 1 }] } });
+    expect(after.status).toBe(403);
+    expect((await staff()).map((x: { name: string }) => x.name)).not.toContain('Meena');
+
+    const feed = (await call(ord.url, 'GET', `/activity?outletId=${OUTLET}`, { token: cashier })).body.map((a: { kind: string; message: string }) => `${a.kind}: ${a.message}`);
+    expect(feed).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^STAFF_REMOVED: .* removed captain Meena$/),
+      expect.stringMatching(/^TABLE_TRANSFERRED: .* moved T7 from Meena to Sunil$/),
+      expect.stringMatching(/^TABLE_OPENED: Meena opened T7 \(2 guests\) and sent KOT #1: 1× Sweet Lassi$/),
+    ]));
+  });
+
+  it("pushes a captain's KOT to the cashier screen live (Server-Sent Events)", async () => {
+    const sunilId = (await staff()).find((x: { name: string }) => x.name === 'Sunil').id;
+    const sunilPhone = await token({ tid: TENANT, roles: ['captain'], outlets: [OUTLET], sub: sunilId });
+    const ctrl = new AbortController();
+    const res = await fetch(`${ord.url}/stream?outletId=${OUTLET}`, { headers: { authorization: `Bearer ${cashier}` }, signal: ctrl.signal });
+    expect(res.headers.get('content-type')).toContain('text/event-stream');
+    const reader = res.body!.getReader();
+
+    const orderId = randomUUID();
+    await call(ord.url, 'POST', '/tables', { token: owner, body: { outletId: OUTLET, label: 'T8', seats: 2 } });
+    await call(ord.url, 'POST', '/orders', { token: sunilPhone, body: { id: orderId, outletId: OUTLET, channel: 'DINE_IN', tableRef: 'T8', lines: [{ itemId: biryani, quantity: 1 }] } });
+
+    let text = '';
+    const deadline = Date.now() + 5_000;
+    while (!text.includes('Sunil opened T8') && Date.now() < deadline) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += new TextDecoder().decode(value);
+    }
+    ctrl.abort();
+    expect(text).toContain('event: activity');
+    const frame = text.split('\n\n').find((f) => f.includes('Sunil opened T8'))!;
+    expect(JSON.parse(frame.split('data: ')[1]!)).toMatchObject({ kind: 'TABLE_OPENED', tableRef: 'T8', captainId: sunilId, actorName: 'Sunil' });
+
+    // Unauthenticated or other-tenant screens can't listen in.
+    expect((await fetch(`${ord.url}/stream?outletId=${OUTLET}`)).status).toBe(401);
   });
 });
 

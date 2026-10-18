@@ -15,7 +15,9 @@ import {
   OutboxRelay,
   runMigrations,
 } from '@ros/common';
-import { OrderModule, registerPaymentConsumers } from './app.module';
+import { randomUUID } from 'node:crypto';
+import { OrderModule, registerLiveFeed, registerPaymentConsumers } from './app.module';
+import { LiveHub } from './live';
 import { OrdersService } from './orders.service';
 import { DevServiceTokenProvider, PaymentClient } from './payment-client';
 
@@ -47,6 +49,7 @@ async function main() {
     corsOrigins: cfg.CORS_ORIGINS.split(',').filter(Boolean),
   });
   await registerPaymentConsumers(bus, appDb, log, app.get(OrdersService));
+  await registerLiveFeed(bus, app.get(LiveHub), randomUUID());
   await bus.start();
 
   installProcessGuards(log, async () => {

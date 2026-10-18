@@ -45,20 +45,28 @@ Open http://localhost:4000. A single screen shows three roles of a 10-table rest
 - **Cashier (floor):** every table as a tile with its status (free, occupied, bill requested, paying), running amount, guests, minutes open and items. Click a table for the GST bill, then take cash, UPI (press "Customer pays" to act as the customer's phone) or a split. Once paid, the invoice number is assigned and the table frees up.
 - **Kitchen:** every KOT as a ticket, the moment the captain sends it.
 
-The bottom-right panel shows the events flowing between services.
+- **Captains on duty (cashier):** add a captain, remove one (blocked while they own open tables), and see each captain's open tables and running amount. Move a table to another captain from its bill. A removed captain's phone is signed out immediately and every request from it is refused.
+- **Live activity:** every action (table opened, KOT sent, bill requested, payment, table moved, staff changes) is written to an activity log and pushed to staff screens.
+
+How "who has this order" works:
+1. When a captain opens a table, the order is stamped with their staff id. The order service checks they are an active captain on every request.
+2. The action and an activity row are saved in one transaction, plus an outbox event (`pos.activity.recorded`).
+3. The relay publishes the event, and the order service's live hub pushes it to every connected screen of that outlet over Server-Sent Events. The cashier sees it within a moment; a screen that reconnects reloads the log, so nothing is missed.
+4. The settled bill carries the captain into analytics, which powers captain performance on the owner dashboard.
+
+Demo data is kept in `.demo-data/` between runs; `npm run demo -- --fresh` starts over.
 
 **Owner dashboard: http://localhost:4000/owner** (loaded with 60 days of realistic history):
 
 | Page | What the owner gets |
 |---|---|
-| Overview | Net sales, bills, average bill, guests, table time, GST, refunds (each vs the previous period); daily trend; payment mix; busy-hours heatmap; top dishes |
+| Overview | **Right now** (open tables, running bills, guests seated, by captain, live); net sales, bills, average bill, guests, table time, GST, refunds (each vs the previous period); captain performance; daily trend; payment mix; busy-hours heatmap; top dishes |
 | Menu engineering | Every dish rated Star / Plowhorse / Puzzle / Dog by popularity × profit per plate, with what to do about it |
 | Finance & GST | Automatic P&L (sales − refunds − food cost − gateway fees − expenses, with monthly costs accrued by day), food and prime cost %, GST output by rate with CGST/SGST, collections by method, month by month, expense entry |
 | Customers (CRM) | Known guests, repeat rate, segments (Champions, Loyal, New, Occasional, At risk, Lost), top guests (masked numbers), win-back list of consenting guests |
 | Alerts | Sales-drop detection (each day vs the same weekday over the last 4 weeks), overpayments, late captures, refunds by size, refund rate |
 
-How analytics is set up: the analytics service never reads another service's database. It consumes `pos.order.settled`, `payment.refunded`, `payment.captured` and `pos.order.overpaid` events into its own reporting tables (inbox dedup, tenant RLS). The tables have the same shape as the planned ClickHouse / data-lake "gold" layer, so reporting can move to ClickHouse without changing the APIs. Financial reports are owner-only, and managers see sales and CRM. Each run starts with a fresh, temporary database.
-
+How analytics is set up: the analytics service never reads another service's database. It consumes `pos.order.settled`, `payment.refunded`, `payment.captured` and `pos.order.overpaid` events into its own reporting tables (inbox dedup, tenant RLS). The tables have the same shape as the planned ClickHouse / data-lake "gold" layer, so reporting can move to ClickHouse without changing the APIs. Financial reports are owner-only, and managers see sales and CRM. 
 ## Run the tests
 
 ```bash

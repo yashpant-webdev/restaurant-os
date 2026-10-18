@@ -34,7 +34,21 @@
   .stat { background: var(--chip); border-radius: 8px; padding: 4px 10px; font-size: 12px; }
   .stat b { font-size: 14px; font-variant-numeric: tabular-nums; }
   main { display: grid; grid-template-columns: 340px 1fr; gap: 14px; padding: 14px 18px; align-items: start; }
-  .lower { grid-column: 1 / -1; display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; }
+  .lower { grid-column: 1 / -1; display: grid; grid-template-columns: 1.15fr 1fr 0.9fr; gap: 14px; }
+  @media (max-width: 1200px) { .lower { grid-template-columns: 1fr 1fr; } }
+  .feed div { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .feed .k { font-size: 10px; font-weight: 800; letter-spacing: .04em; color: var(--accent); }
+  .feed .new { animation: flash 2s ease-out; }
+  @keyframes flash { from { background: var(--bill); } to { background: transparent; } }
+  .live { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; text-transform: none; letter-spacing: 0; }
+  .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .live.on i { background: var(--ok); }
+  .staff-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px dashed var(--line); }
+  .staff-row .n { flex: 1; min-width: 0; }
+  .staff-row small { display: block; color: var(--muted); }
+  .who { font-size: 11px; font-weight: 700; }
+  .tbl.mine { box-shadow: inset 0 0 0 2px var(--accent); }
+  select { font: inherit; padding: 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
   @media (max-width: 900px) { main, .lower { grid-template-columns: 1fr; padding: 10px 16px; } }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; min-width: 0; }
   .panel > h2 { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
@@ -137,7 +151,9 @@
 
   <div class="lower">
     <section class="panel"><h2>Kitchen display (KOTs) <span class="muted">newest first</span></h2><div class="tickets" id="kitchen"></div></section>
-    <section class="panel"><h2>Events between services</h2><div class="log" id="events"></div></section>
+    <section class="panel"><h2>Live activity <span class="live" id="liveBadge"><i></i>connecting…</span></h2><div class="log feed" id="feed"></div></section>
+    <section class="panel"><h2>Captains on duty <span class="muted">add · remove · load</span></h2><div id="staff"></div>
+      <form class="row" id="addCaptain"><input name="name" placeholder="New captain's name" maxlength="60" required style="flex:1;width:auto"><button class="btn small">Add captain</button></form></section>
   </div>
 </main>
 <div class="toast" id="toast"></div>
@@ -155,17 +171,39 @@ let cfg, floor = { tables: [], summary: {} };
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => (t.style.display = 'none'), 3200); }
 
 async function api(base, method, path, { body, role = 'cashier', key } = {}) {
-  const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + cfg.tokens[role] };
+  const tok = role === 'captain' ? cap.user?.token : cfg.tokens[role];
+  const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + tok };
   if (key) headers['idempotency-key'] = key;
   const res = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) { const e = new Error(data?.error?.message || 'HTTP ' + res.status); e.code = data?.error?.code; e.details = data?.error?.details; throw e; }
+  if (!res.ok) {
+    const e = new Error(data?.error?.message || 'HTTP ' + res.status); e.code = data?.error?.code; e.details = data?.error?.details;
+    if (role === 'captain' && res.status === 403) capSignOut(e.message); // e.g. this captain was just removed
+    throw e;
+  }
   return data;
 }
 const orderApi = (m, p, o) => api(cfg.orderUrl, m, p, o);
 
 // ======================= CAPTAIN (phone) =======================
-const cap = { screen: 'floor', table: null, order: null, guests: 2, cart: new Map(), kotId: null };
+const cap = { screen: 'login', user: null, table: null, order: null, guests: 2, cart: new Map(), kotId: null };
+try { cap.user = JSON.parse(sessionStorage.getItem('captain') || 'null'); if (cap.user) cap.screen = 'floor'; } catch {}
+
+function capSignOut(reason) {
+  cap.user = null; cap.screen = 'login'; cap.order = null; cap.table = null; cap.cart.clear();
+  try { sessionStorage.removeItem('captain'); } catch {}
+  if (reason) toast(reason);
+  renderCaptain();
+}
+async function capSignIn(staffId) {
+  const r = await fetch('/demo/token?staffId=' + staffId);
+  if (!r.ok) return toast('That captain is no longer active');
+  const t = await r.json();
+  cap.user = { id: staffId, name: t.name, token: t.token };
+  try { sessionStorage.setItem('captain', JSON.stringify(cap.user)); } catch {}
+  cap.screen = 'floor';
+  renderCaptain();
+}
 
 function capFloor() {
   cap.screen = 'floor'; cap.table = null; cap.order = null; cap.cart.clear(); cap.kotId = null;
@@ -179,22 +217,33 @@ async function capOpen(label) {
   renderCaptain();
 }
 
-function renderCaptain() {
+async function renderCaptain() {
+  if (cap.screen === 'login') {
+    $('capBar').innerHTML = `<b>Captain app</b><span class="muted">Sign in</span>`;
+    const list = await (await fetch('/demo/captains')).json();
+    $('capBody').innerHTML = `<p class="muted" style="margin-top:0">Who is using this phone?</p>` +
+      (list.map((c) => `<button class="tbl" style="width:100%;min-height:0;margin-bottom:8px" data-cap-login="${c.id}">
+        <span class="lbl">${esc(c.name)}<small>${c.openTables ? c.openTables + ' open tables' : 'no open tables'}</small></span></button>`).join('') || '<div class="empty">No captains yet. Add one at the cashier.</div>') +
+      `<p class="muted" style="font-size:12px">Demo sign-in. In production each captain signs in with their own account (Keycloak) and PIN.</p>`;
+    $('capFoot').innerHTML = '';
+    return;
+  }
   if (cap.screen === 'floor') {
-    $('capBar').innerHTML = `<b>Captain · Ravi</b><span class="muted">Tables</span>`;
+    const mine = floor.tables.filter((t) => t.order?.captain?.id === cap.user.id);
+    $('capBar').innerHTML = `<b>${esc(cap.user.name)}</b><span class="muted">${mine.length} of my tables</span><button class="link" data-cap="logout">Switch</button>`;
     $('capBody').innerHTML = `<div class="tables small">${floor.tables.map((t) => `
-      <button class="tbl ${t.status}" data-cap-table="${t.label}">
+      <button class="tbl ${t.status} ${t.order?.captain?.id === cap.user.id ? 'mine' : ''}" data-cap-table="${t.label}">
         <span class="lbl">${t.label}<small>${t.order ? (t.order.guests ?? '–') + '/' : ''}${t.seats} seats</small></span>
         <span class="amt">${t.order ? inr0(t.order.totalPaise) : STATUS.FREE}</span>
-        ${t.order ? `<small>${mins(t.order.openedAt)} min</small>` : ''}
+        ${t.order ? `<small class="who">${t.order.captain?.id === cap.user.id ? 'Mine' : esc(t.order.captain?.name ?? 'No captain')} · ${mins(t.order.openedAt)}m</small>` : ''}
       </button>`).join('')}</div>`;
-    $('capFoot').innerHTML = `<span class="muted" style="font-size:12px">Tap a table to take an order.</span>`;
+    $('capFoot').innerHTML = `<span class="muted" style="font-size:12px">Tap a table to take an order. Orange outline = your tables.</span>`;
     return;
   }
   const t = cap.table, o = cap.order;
   const locked = o && o.payments.some((p) => ['PENDING', 'CAPTURED'].includes(p.status));
   $('capBar').innerHTML = `<button class="link" data-cap="back">‹ Tables</button><b>${t.label}</b>
-    <span class="muted">${o ? `${o.guests ?? '–'} guests · ${inr0(o.totalPaise)}` : `${t.seats} seats`}</span>`;
+    <span class="muted">${o ? `${o.guests ?? '–'} guests · ${inr0(o.totalPaise)}${o.captain && o.captain.id !== cap.user.id ? ' · ' + esc(o.captain.name) + "'s table" : ''}` : `${t.seats} seats`}</span>`;
 
   const sent = o ? groupByKot(o.lines).map(([no, ls]) => `<div class="kot"><b>KOT #${no} · sent to kitchen</b>${ls.map((l) => `${l.quantity}× ${esc(l.name)}`).join('<br>')}</div>`).join('') : '';
   const guests = !o ? `<div class="row" style="margin:0 0 6px"><span class="grow">Guests</span><span class="step"><button data-cap="g-">−</button><span>${cap.guests}</span><button data-cap="g+">+</button></span></div>` : '';
@@ -214,9 +263,11 @@ function renderCaptain() {
 $('capBody').parentElement.addEventListener('click', async (e) => {
   const b = e.target.closest('button'); if (!b) return;
   try {
+    if (b.dataset.capLogin) return capSignIn(b.dataset.capLogin);
     if (b.dataset.capTable) return capOpen(b.dataset.capTable);
     const a = b.dataset.cap; if (!a) return;
     if (a === 'back') return capFloor();
+    if (a === 'logout') return capSignOut();
     if (a === 'g-' || a === 'g+') { cap.guests = Math.max(1, Math.min(cap.table.seats + 4, cap.guests + (a === 'g+' ? 1 : -1))); return renderCaptain(); }
     if (a === '+' || a === '-') { const q = (cap.cart.get(b.dataset.id) || 0) + (a === '+' ? 1 : -1); q > 0 ? cap.cart.set(b.dataset.id, q) : cap.cart.delete(b.dataset.id); cap.kotId = null; return renderCaptain(); }
     if (a === 'send') {
@@ -256,6 +307,7 @@ function renderCashFloor() {
     <button class="tbl ${t.status} ${cash.label === t.label ? 'sel' : ''}" data-cash-table="${t.label}">
       <span class="lbl">${t.label}<small>${STATUS[t.status]}</small></span>
       ${t.order ? `<span class="amt">${inr(t.order.totalPaise)}</span>
+        <small class="who">Captain: ${esc(t.order.captain?.name ?? '—')}</small>
         <small>${t.order.guests ?? '–'} guests · ${mins(t.order.openedAt)} min · ${t.order.kotCount} KOT</small>
         <ul>${t.order.items.slice(0, 3).map((i) => `<li>${i.quantity}× ${esc(i.name)}</li>`).join('')}${t.order.items.length > 3 ? `<li>+${t.order.items.length - 3} more</li>` : ''}</ul>`
       : `<small>${t.seats} seats</small>`}
@@ -271,6 +323,8 @@ function renderCashBill() {
   $('cashBill').innerHTML = `
     <div class="row" style="margin:0 0 6px;justify-content:space-between"><b style="font-size:16px">${esc(o.tableRef)} · ${o.guests ?? '–'} guests</b><span class="pill s-${o.status}">${o.status}</span></div>
     <div class="muted" style="font-size:12px">${o.invoiceNo ? 'Invoice ' + esc(o.invoiceNo) : `Opened ${time(o.openedAt)}${o.billRequestedAt ? ' · bill requested ' + time(o.billRequestedAt) : ''}`}</div>
+    <div class="row" style="margin-top:6px"><span class="grow">Captain: <b>${esc(o.captain?.name ?? 'none')}</b></span>
+      ${o.status === 'OPEN' ? `<select id="moveTo" aria-label="Move table to captain"><option value="">Move to…</option>${staffList.filter((x) => x.role === 'CAPTAIN' && x.id !== o.captain?.id).map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select>` : ''}</div>
     <table>${lines}
       <tr class="sep"><td class="muted">Subtotal</td><td class="num">${inr(o.subtotalPaise)}</td></tr>
       <tr><td class="muted">CGST 2.5%</td><td class="num">${inr(o.cgstPaise)}</td></tr>
@@ -296,6 +350,15 @@ $('cashFloor').addEventListener('click', async (e) => {
   const t = floor.tables.find((x) => x.label === cash.label);
   cash.order = t.order ? await orderApi('GET', `/orders/${t.order.id}`) : null;
   renderCashFloor(); renderCashBill();
+});
+
+$('cashBill').addEventListener('change', async (e) => {
+  if (e.target.id !== 'moveTo' || !e.target.value) return;
+  try {
+    cash.order = await orderApi('POST', `/orders/${cash.order.id}/captain`, { body: { captainId: e.target.value } });
+    toast(`${cash.order.tableRef} moved to ${cash.order.captain.name}`);
+    await refresh(true);
+  } catch (err) { toast(err.message); }
 });
 
 $('cashBill').addEventListener('click', async (e) => {
@@ -327,18 +390,76 @@ $('cashBill').addEventListener('click', async (e) => {
 function renderKitchen(kots) {
   $('kitchen').innerHTML = kots.map((k) => `<div class="ticket ${mins(k.createdAt) < 1 ? 'new' : ''}">
     <div class="h"><span>${esc(k.tableRef ?? 'Takeaway')}</span><span>KOT #${k.kotNo}</span></div>
-    <div class="m">${time(k.createdAt)} · ${esc(k.createdBy)}</div>
+    <div class="m">${time(k.createdAt)} · sent by ${esc(k.createdBy)}${k.captainName && k.captainName !== k.createdBy ? ' · captain ' + esc(k.captainName) : ''}</div>
     ${k.lines.map((l) => `<div>${l.quantity}× ${esc(l.name)}</div>`).join('')}</div>`).join('') || '<div class="empty">No tickets yet.</div>';
 }
-function renderEvents(ev) {
-  $('events').innerHTML = ev.map((e) => `<div><span class="t">${esc(e.type)}</span> <span class="muted">${time(e.occurredAt)}</span> ${esc(summarize(e))}</div>`).join('') || '<div class="muted">No events yet.</div>';
+// ======================= CAPTAINS PANEL =======================
+let staffList = [];
+function renderStaff() {
+  const caps = staffList.filter((x) => x.role === 'CAPTAIN');
+  $('staff').innerHTML = caps.map((c) => `<div class="staff-row"><span class="n"><b>${esc(c.name)}</b>
+      <small>${c.openTables ? `${c.openTables} open · ${c.tables.join(', ')} · ${inr0(c.runningPaise)}` : 'No open tables'}</small></span>
+      <button class="btn ghost small" data-remove="${c.id}" data-name="${esc(c.name)}" ${c.openTables ? 'title="Move their tables first"' : ''}>Remove</button></div>`).join('')
+    || '<div class="empty">No captains. Add one below.</div>';
 }
-function summarize(e) {
-  const p = e.payload;
-  if (e.type === 'pos.kot.created') return `${p.tableRef} KOT #${p.kotNo}: ${p.lines.map((l) => l.quantity + '× ' + l.name).join(', ')}`;
-  if (e.type.startsWith('payment.')) return `${p.method} ${inr(p.amountPaise)} ${p.status}${p.refundedPaise ? ' refunded ' + inr(p.refundedPaise) : ''}`;
-  if (e.type === 'pos.order.settled') return `invoice ${p.invoiceNo} ${inr(p.totalPaise)}`;
-  return JSON.stringify(p);
+$('staff').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-remove]'); if (!b) return;
+  if (!confirm(`Remove captain ${b.dataset.name}? Their phone will stop working immediately.`)) return;
+  try { await orderApi('DELETE', `/staff/${b.dataset.remove}`); toast(`${b.dataset.name} removed`); }
+  catch (err) { toast(err.details?.tables ? `${err.message} (${err.details.tables.join(', ')})` : err.message); }
+  await refresh(true);
+});
+$('addCaptain').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = e.target.name.value.trim(); if (!name) return;
+  try { await orderApi('POST', '/staff', { body: { outletId: cfg.outletId, name, role: 'CAPTAIN' } }); toast(`${name} added as captain`); e.target.reset(); }
+  catch (err) { toast(err.message); }
+  await refresh(true);
+  if (cap.screen === 'login') renderCaptain();
+});
+
+// ======================= LIVE ACTIVITY (pushed from the server) =======================
+// The order service streams every captain/cashier action over Server-Sent Events.
+// fetch() is used instead of EventSource so the token travels in the Authorization
+// header, never in the URL (URLs end up in logs).
+let feed = [];
+const TOAST_KINDS = new Set(['TABLE_OPENED', 'KOT_SENT', 'BILL_REQUESTED', 'TABLE_TRANSFERRED', 'STAFF_REMOVED']);
+function renderFeed(freshId) {
+  $('feed').innerHTML = feed.map((a) => `<div class="${a.activityId === freshId ? 'new' : ''}"><span class="k">${esc(a.kind.replace('_', ' '))}</span>
+    <span class="muted">${time(a.at)}</span><br>${esc(a.message)}</div>`).join('') || '<div class="muted">Nothing yet. Open a table on the captain phone.</div>';
+}
+async function connectLive() {
+  let delay = 1000;
+  for (;;) {
+    try {
+      feed = await orderApi('GET', `/activity?outletId=${cfg.outletId}`); // catch up on anything missed while disconnected
+      renderFeed();
+      const res = await fetch(`${cfg.orderUrl}/stream?outletId=${cfg.outletId}`, { headers: { authorization: 'Bearer ' + cfg.tokens.cashier } });
+      if (!res.ok || !res.body) throw new Error('stream refused');
+      $('liveBadge').className = 'live on'; $('liveBadge').innerHTML = '<i></i>live';
+      delay = 1000;
+      const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read(); if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+          const frame = buf.slice(0, i); buf = buf.slice(i + 2);
+          const data = frame.split('\n').find((l) => l.startsWith('data: '));
+          if (!data) continue;
+          const a = JSON.parse(data.slice(6));
+          if (feed.some((x) => x.activityId === a.activityId)) continue;
+          feed = [a, ...feed].slice(0, 50);
+          renderFeed(a.activityId);
+          if (a.kind === 'STAFF_REMOVED' && a.captainId === cap.user?.id) capSignOut(`${cap.user.name} was removed by ${a.actorName}: signed out`);
+          else if (TOAST_KINDS.has(a.kind) && a.actorId !== cap.user?.id) toast(a.message);
+          refresh(true); // pull the new floor state right away instead of waiting for the next poll
+        }
+      }
+    } catch { /* fall through to reconnect */ }
+    $('liveBadge').className = 'live'; $('liveBadge').innerHTML = '<i></i>reconnecting…';
+    await new Promise((r) => setTimeout(r, delay)); delay = Math.min(delay * 2, 15000);
+  }
 }
 
 // ======================= helpers + polling =======================
@@ -356,15 +477,15 @@ const last = {};
 const changed = (k, v) => { const j = JSON.stringify(v); if (last[k] === j) return false; last[k] = j; return true; };
 async function refresh(force = false) {
   try {
-    const [f, kots, ev] = await Promise.all([
+    const [f, kots, st] = await Promise.all([
       orderApi('GET', `/floor?outletId=${cfg.outletId}`),
       orderApi('GET', `/kots?outletId=${cfg.outletId}`),
-      fetch('/demo/events').then((r) => r.json()),
+      orderApi('GET', `/staff?outletId=${cfg.outletId}`),
     ]);
-    floor = f;
+    floor = f; staffList = st;
     if (changed('floor', f) || force) { renderStats(); renderCashFloor(); if (cap.screen === 'floor') renderCaptain(); }
     if (changed('kots', kots)) renderKitchen(kots);
-    if (changed('events', ev)) renderEvents(ev);
+    if (changed('staff', st)) renderStaff();
     if (cash.order) {
       const o = await orderApi('GET', `/orders/${cash.order.id}`);
       for (const p of o.payments) if (p.status === 'PENDING' && p.method !== 'CASH' && !cash.checkout[p.paymentId]) {
@@ -376,6 +497,7 @@ async function refresh(force = false) {
     if (cap.order && cap.cart.size === 0) {
       const o = await orderApi('GET', `/orders/${cap.order.id}`, { role: 'captain' });
       if (o.status !== 'OPEN') { toast(`${cap.table.label} settled and free`); return capFloor(); }
+      if (o.captain && o.captain.id !== cap.order.captain?.id) toast(`${cap.table.label} is now ${o.captain.name}'s table`);
       cap.order = o;
       if (changed('capOrder', o)) renderCaptain();
     }
@@ -385,9 +507,12 @@ async function refresh(force = false) {
 (async () => {
   cfg = await (await fetch('/demo/config')).json();
   $('outlet').textContent = cfg.outletName;
+  // A phone remembers who signed in; make sure that account is still active.
+  if (cap.user && !(await fetch('/demo/token?staffId=' + cap.user.id)).ok) capSignOut(`${cap.user.name}'s account was removed: please sign in`);
   await refresh(true);
   renderCaptain();
-  setInterval(() => refresh(), 1500);
+  connectLive();
+  setInterval(() => refresh(), 5000); // safety net only; changes arrive through the live stream
 })();
 </script>
 </body>

@@ -119,6 +119,14 @@ export class ReportsService {
           WHERE outlet_id = $1 AND business_date BETWEEN $2 AND $3 GROUP BY 1 ORDER BY net DESC`,
         [r.outletId, r.from, r.to],
       );
+      const { rows: captains } = await tx.query(
+        `SELECT captain_id AS "captainId", MAX(captain_name) AS name, COUNT(*)::bigint AS bills, SUM(subtotal_paise)::bigint AS net,
+                COALESCE(SUM(guests),0)::bigint AS guests, ROUND(AVG(total_paise))::bigint AS "avgBill",
+                ROUND(AVG(EXTRACT(EPOCH FROM settled_at - opened_at) / 60) FILTER (WHERE opened_at IS NOT NULL))::int AS "avgTableMin"
+           FROM fact_orders WHERE outlet_id = $1 AND business_date BETWEEN $2 AND $3 AND captain_id IS NOT NULL
+          GROUP BY captain_id ORDER BY net DESC`,
+        [r.outletId, r.from, r.to],
+      );
       const k = (x: typeof cur) => ({
         netSalesPaise: x.net,
         grossSalesPaise: x.gross,
@@ -129,7 +137,7 @@ export class ReportsService {
         perCoverPaise: x.guests ? Math.round(x.net / x.guests) : 0,
         avgTableMinutes: x.avg_table_min === null ? null : Math.round(x.avg_table_min),
       });
-      return { range: r, previousRange: prev, kpis: { ...k(cur), refundsPaise: refunds }, previous: k(before), daily, heatmap: heat, paymentMix, topItems, channels };
+      return { range: r, previousRange: prev, kpis: { ...k(cur), refundsPaise: refunds }, previous: k(before), daily, heatmap: heat, paymentMix, topItems, channels, captains };
     });
   }
 

@@ -25,12 +25,13 @@ export async function registerProjections(bus: EventBus, db: Database, log: Logg
 async function projectSettled(tx: Tx, tenantId: string, p: EventPayload<typeof Topics.OrderSettled>) {
   const { rowCount } = await tx.query(
     `INSERT INTO fact_orders (order_id, tenant_id, outlet_id, invoice_no, business_date, settled_at, opened_at, channel, table_ref, guests,
-                              created_by, subtotal_paise, cgst_paise, sgst_paise, round_off_paise, total_paise, customer_phone)
-     VALUES ($2, $3, $4, $5, ${IST_DATE}, $1, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                              created_by, subtotal_paise, cgst_paise, sgst_paise, round_off_paise, total_paise, customer_phone, captain_id, captain_name)
+     VALUES ($2, $3, $4, $5, ${IST_DATE}, $1, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
      ON CONFLICT (order_id) DO NOTHING`,
     [
       p.settledAt, p.orderId, tenantId, p.outletId, p.invoiceNo, p.openedAt ?? null, p.channel ?? null, p.tableRef ?? null, p.guests ?? null,
       p.createdBy ?? null, p.subtotalPaise, p.cgstPaise, p.sgstPaise, p.roundOffPaise, p.totalPaise, p.customer?.phone ?? null,
+      p.captainId ?? null, p.captainName ?? null,
     ],
   );
   if (!rowCount) return; // already projected

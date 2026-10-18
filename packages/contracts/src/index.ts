@@ -73,6 +73,8 @@ export const OrderSettled = z.object({
   guests: z.number().int().positive().nullable().optional(),
   openedAt: z.string().datetime().optional(),
   createdBy: z.string().optional(),
+  captainId: z.string().uuid().nullable().optional(),
+  captainName: z.string().nullable().optional(),
   customer: z.object({ phone: z.string().regex(/^[6-9][0-9]{9}$/), name: z.string().nullable(), marketingConsent: z.boolean() }).nullable().optional(),
   lines: z
     .array(
@@ -107,12 +109,30 @@ export const KotCreated = z.object({
   createdBy: z.string(),
 });
 
+/** Something happened on the floor that staff screens should see live. */
+export const ActivityRecorded = z.object({
+  activityId: z.string().uuid(),
+  outletId: z.string().uuid(),
+  kind: z.enum([
+    'TABLE_OPENED', 'KOT_SENT', 'BILL_REQUESTED', 'CUSTOMER_ADDED', 'PAYMENT_STARTED', 'ORDER_SETTLED',
+    'ORDER_CANCELLED', 'TABLE_TRANSFERRED', 'STAFF_ADDED', 'STAFF_REMOVED',
+  ]),
+  orderId: z.string().uuid().nullable(),
+  tableRef: z.string().nullable(),
+  captainId: z.string().uuid().nullable(),
+  actorId: z.string(),
+  actorName: z.string(),
+  message: z.string(),
+  at: z.string().datetime(),
+});
+
 export const Topics = {
   PaymentCaptured: 'payment.captured',
   PaymentFailed: 'payment.failed',
   PaymentCancelled: 'payment.cancelled',
   PaymentRefunded: 'payment.refunded',
   KotCreated: 'pos.kot.created',
+  ActivityRecorded: 'pos.activity.recorded',
   OrderSettled: 'pos.order.settled',
   OrderOverpaid: 'pos.order.overpaid',
 } as const;
@@ -123,6 +143,7 @@ export const EventSchemas = {
   [Topics.PaymentCancelled]: PaymentCancelled,
   [Topics.PaymentRefunded]: PaymentRefunded,
   [Topics.KotCreated]: KotCreated,
+  [Topics.ActivityRecorded]: ActivityRecorded,
   [Topics.OrderSettled]: OrderSettled,
   [Topics.OrderOverpaid]: OrderOverpaid,
 } as const;

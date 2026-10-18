@@ -257,9 +257,26 @@ const card = (title, sub, body, id = '') => `<section class="card"><h2>${title}<
 
 // ---------------- pages ----------------
 async function overview() {
-  const d = await get('/analytics/overview');
+  const [d, floor] = await Promise.all([
+    get('/analytics/overview'),
+    fetch(`${cfg.orderUrl}/floor?outletId=${cfg.outletId}`, { headers: { authorization: 'Bearer ' + cfg.tokens.owner } }).then((r) => r.json()),
+  ]);
   const k = d.kpis, p = d.previous;
+  const open = floor.tables.filter((t) => t.order);
+  const seated = open.reduce((s, t) => s + (t.order.guests ?? 0), 0);
+  const byCaptain = groupOpen(open);
   $('page').innerHTML = `
+    <section class="card" style="margin-bottom:14px">
+      <h2>Right now <span style="font-weight:400;color:var(--muted)">· live from the floor, not yet in the totals below (those count paid bills)</span></h2>
+      <div class="grid kpis" style="margin-top:10px">
+        ${kpi('Tables occupied', `${open.length} / ${floor.tables.length}`, `<span class="delta">${floor.summary.billRequested} waiting for the bill</span>`)}
+        ${kpi('Running bills', inr(floor.summary.runningPaise), '<span class="delta">food served, not yet paid</span>')}
+        ${kpi('Guests seated', num(seated), `<span class="delta">${open.length ? Math.round(open.reduce((s, t) => s + mins(t.order.openedAt), 0) / open.length) + ' min average so far' : 'no open tables'}</span>`)}
+        ${kpi('Paid today', inr(floor.summary.settledTodayPaise), `<span class="delta">${floor.summary.settledTodayCount} bills</span>`)}
+      </div>
+      ${byCaptain.length ? `<div class="sub" style="margin:12px 0 4px">Open tables by captain</div><div style="display:flex;gap:8px;flex-wrap:wrap">${byCaptain.map(([name, ts]) =>
+        `<span class="pill" style="padding:5px 10px">${esc(name)}: ${ts.map((t) => t.label).join(', ')} · ${inr(ts.reduce((s, t) => s + t.order.totalPaise, 0))}</span>`).join('')}</div>` : ''}
+    </section>
     <div class="grid kpis">
       ${kpi('Net sales (ex-GST)', lakh(k.netSalesPaise), delta(k.netSalesPaise, p.netSalesPaise))}
       ${kpi('Bills', num(k.bills), delta(k.bills, p.bills))}
@@ -272,6 +289,11 @@ async function overview() {
       ${card('Net sales per day', `${d.range.from} to ${d.range.to} · hover for detail · the last point is today, so far`, '', 'trend')}
       ${card('Payment mix', 'Money collected by method', hbars(d.paymentMix, { value: (r) => r.net, label: (r) => r.method, fmt: lakh, tip: (r) => `<b>${r.method}</b>${inr(r.net)} · ${num(r.count)} payments` }))}
     </div>
+    <div style="margin-top:14px">${card('Captain performance', 'Paid bills served by each captain in the period', d.captains.length ? `<div class="scroll"><table>
+      <tr><th>Captain</th><th class="n">Bills</th><th class="n">Net sales</th><th class="n">Share</th><th class="n">Guests</th><th class="n">Avg bill</th><th class="n">Avg table time</th></tr>
+      ${d.captains.map((c) => `<tr><td>${esc(c.name)}</td><td class="n">${num(c.bills)}</td><td class="n">${lakh(c.net)}</td>
+        <td class="n">${((c.net / Math.max(1, d.captains.reduce((s, x) => s + x.net, 0))) * 100).toFixed(1)}%</td><td class="n">${num(c.guests)}</td>
+        <td class="n">${inr(c.avgBill)}</td><td class="n">${c.avgTableMin ?? '–'} min</td></tr>`).join('')}</table></div>` : '<div class="empty">No captain data yet.</div>')}</div>
     <div class="grid halves" style="margin-top:14px">
       ${card('Busy hours', 'Net sales by weekday and hour (IST). Plan staff and prep around the dark cells.', heatmap(d.heatmap))}
       ${card('Top 10 dishes', 'By net sales', hbars(d.topItems, { value: (r) => r.net, label: (r) => r.name, fmt: lakh, tip: (r) => `<b>${esc(r.name)}</b>${inr(r.net)} · ${num(r.quantity)} sold` }))}
@@ -401,6 +423,13 @@ async function alerts() {
     </table></div>`)}</div>`;
 }
 
+const mins = (iso) => Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
+function groupOpen(open) {
+  const m = new Map();
+  for (const t of open) { const n = t.order.captain?.name ?? 'No captain'; m.set(n, [...(m.get(n) || []), t]); }
+  return [...m];
+}
+
 const RENDER = { overview, menu, finance, customers, alerts };
 async function render() {
   $('nav').innerHTML = PAGES.map(([k, l]) => `<button data-page="${k}" aria-current="${state.page === k}">${l}</button>`).join('');
@@ -417,6 +446,7 @@ let resizeT; addEventListener('resize', () => { clearTimeout(resizeT); resizeT =
   cfg = await (await fetch('/demo/config')).json();
   $('outlet').textContent = cfg.outletName;
   render();
+  setInterval(() => { if (state.page === 'overview' && !document.hidden) render(); }, 15000); // keep "Right now" fresh
 })();
 </script>
 </body>

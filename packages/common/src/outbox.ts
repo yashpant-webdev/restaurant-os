@@ -42,8 +42,11 @@ export async function enqueueEvent<T extends Topic>(
  * is ever dropped. The loop catches everything, so a broker outage degrades
  * to "events delayed" and never crashes the service.
  */
+const DB_UNAVAILABLE = new Set(['57P01', '57P02', '57P03', 'ECONNREFUSED', 'ECONNRESET']);
+
 export class OutboxRelay {
   private running = false;
+  private dbDown = false;
   private loop?: Promise<void>;
   private wake?: () => void;
 
@@ -78,8 +81,19 @@ export class OutboxRelay {
         const published = await this.pollOnce();
         errorBackoff = 100;
         if (published === 0) await this.idle(this.opts.idleMs ?? 500);
+        if (this.dbDown) {
+          this.log.info('database reachable again; outbox relay resumed');
+          this.dbDown = false;
+        }
       } catch (err) {
-        this.log.error({ err }, 'outbox relay poll failed');
+        const code = (err as { code?: string }).code;
+        if (code && DB_UNAVAILABLE.has(code)) {
+          // Restart, failover or shutdown: expected, recoverable. Say it once, keep retrying quietly.
+          if (!this.dbDown) this.log.warn({ code }, 'database unavailable; outbox relay will keep retrying');
+          this.dbDown = true;
+        } else {
+          this.log.error({ err }, 'outbox relay poll failed');
+        }
         await this.idle(errorBackoff);
         errorBackoff = Math.min(errorBackoff * 2, 30_000);
       }

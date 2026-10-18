@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Headers, HttpCode, Inject, Param, ParseUUIDPipe, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, HttpCode, Inject, Param, ParseUUIDPipe, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { CurrentPrincipal, Database, Principal, Public, Roles, ZodPipe } from '@ros/common';
-import { AddItemsInput, AttachCustomerInput, APP_DB, CheckoutInput, CreateMenuItemInput, CreateOrderInput, CreateTableInput, OrdersService } from './orders.service';
+import { CreateStaffInput, StaffService } from './staff';
+import { AddItemsInput, AssignCaptainInput, AttachCustomerInput, APP_DB, CheckoutInput, CreateMenuItemInput, CreateOrderInput, CreateTableInput, OrdersService } from './orders.service';
 
 @Controller()
 export class OrdersController {
@@ -11,6 +12,12 @@ export class OrdersController {
   @Roles('owner', 'manager')
   createMenuItem(@CurrentPrincipal() p: Principal, @Body(new ZodPipe(CreateMenuItemInput)) body: typeof CreateMenuItemInput._type) {
     return this.orders.createMenuItem(p, body);
+  }
+
+  @Get('menu-items')
+  @Roles('owner', 'manager', 'cashier', 'captain')
+  listMenu(@CurrentPrincipal() p: Principal, @Query('outletId', new ParseUUIDPipe()) outletId: string) {
+    return this.orders.listMenu(p, outletId);
   }
 
   @Post('tables')
@@ -45,6 +52,13 @@ export class OrdersController {
   @Roles('owner', 'manager', 'cashier', 'captain')
   attachCustomer(@CurrentPrincipal() p: Principal, @Param('id', new ParseUUIDPipe()) id: string, @Body(new ZodPipe(AttachCustomerInput)) body: typeof AttachCustomerInput._type) {
     return this.orders.attachCustomer(p, id, body);
+  }
+
+  @Post('orders/:id/captain')
+  @HttpCode(200)
+  @Roles('owner', 'manager', 'cashier')
+  assignCaptain(@CurrentPrincipal() p: Principal, @Param('id', new ParseUUIDPipe()) id: string, @Body(new ZodPipe(AssignCaptainInput)) body: typeof AssignCaptainInput._type) {
+    return this.orders.assignCaptain(p, id, body);
   }
 
   @Post('orders/:id/request-bill')
@@ -91,6 +105,36 @@ export class OrdersController {
   @Roles('owner', 'manager', 'cashier')
   cancelPayment(@CurrentPrincipal() p: Principal, @Param('id', new ParseUUIDPipe()) id: string, @Param('paymentId', new ParseUUIDPipe()) paymentId: string) {
     return this.orders.cancelPayment(p, id, paymentId);
+  }
+}
+
+@Controller()
+export class StaffController {
+  constructor(private readonly staff: StaffService) {}
+
+  /** Captains see the list too (to know who is on the floor); only cashiers and above can change it. */
+  @Get('staff')
+  @Roles('owner', 'manager', 'cashier', 'captain')
+  list(@CurrentPrincipal() p: Principal, @Query('outletId', new ParseUUIDPipe()) outletId: string, @Query('includeInactive') inactive?: string) {
+    return this.staff.list(p, outletId, inactive === 'true');
+  }
+
+  @Post('staff')
+  @Roles('owner', 'manager', 'cashier')
+  create(@CurrentPrincipal() p: Principal, @Body(new ZodPipe(CreateStaffInput)) body: typeof CreateStaffInput._type) {
+    return this.staff.create(p, body);
+  }
+
+  @Delete('staff/:id')
+  @Roles('owner', 'manager', 'cashier')
+  remove(@CurrentPrincipal() p: Principal, @Param('id', new ParseUUIDPipe()) id: string) {
+    return this.staff.remove(p, id);
+  }
+
+  @Get('activity')
+  @Roles('owner', 'manager', 'cashier', 'captain')
+  activity(@CurrentPrincipal() p: Principal, @Query('outletId', new ParseUUIDPipe()) outletId: string) {
+    return this.staff.activity(p, outletId);
   }
 }
 

@@ -11,3 +11,4 @@ coverage/
 **/src/**/*.js
 **/src/**/*.js.map
 **/src/**/*.d.ts
+.demo-data/

@@ -17,7 +17,7 @@ function rng(seed) {
 const FIRST = ['Priya', 'Arjun', 'Ananya', 'Rohan', 'Kavya', 'Vikram', 'Meera', 'Aditya', 'Sneha', 'Rahul', 'Isha', 'Karan', 'Divya', 'Nikhil', 'Pooja', 'Sameer', 'Neha', 'Varun', 'Aisha', 'Manish'];
 const LAST = ['Sharma', 'Iyer', 'Reddy', 'Nair', 'Gupta', 'Rao', 'Menon', 'Kapoor', 'Joshi', 'Pillai', 'Shetty', 'Verma'];
 
-export async function generateHistory({ bus, tenantId, outletId, menu, days }) {
+export async function generateHistory({ bus, tenantId, outletId, menu, captains, days }) {
   const rand = rng(20261018);
   const pick = (arr) => arr[Math.floor(rand() * arr.length)];
   const weighted = (items, w) => {
@@ -91,6 +91,8 @@ export async function generateHistory({ bus, tenantId, outletId, menu, days }) {
         customer = { phone: c.phone, name: c.name, marketingConsent: c.marketingConsent };
       }
 
+      // Captains: Ravi is the senior one and takes more tables.
+      const captain = weighted(captains, (c) => (c.name === 'Ravi' ? 1.6 : c.name === 'Meena' ? 0.8 : 1));
       const orderId = randomUUID();
       seq++;
       await publish(
@@ -99,7 +101,7 @@ export async function generateHistory({ bus, tenantId, outletId, menu, days }) {
           orderId, outletId, invoiceNo: `H${String(seq).padStart(6, '0')}`,
           subtotalPaise: subtotal, cgstPaise: cgst, sgstPaise: sgst, roundOffPaise: total - subtotal - tax, totalPaise: total, paidPaise: total,
           payments, settledAt: settled.toISOString(), channel: 'DINE_IN', tableRef: `T${1 + Math.floor(rand() * 10)}`, guests,
-          openedAt: new Date(settled.getTime() - tableMinutes * 60_000).toISOString(), createdBy: pick(['Ravi (captain)', 'Sunil (captain)', 'Asha (cashier)']),
+          openedAt: new Date(settled.getTime() - tableMinutes * 60_000).toISOString(), createdBy: captain.name, captainId: captain.id, captainName: captain.name,
           customer, lines,
         },
         settled.toISOString(),
