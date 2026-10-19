@@ -89,7 +89,8 @@ async function main() {
   for (const t of topics) await bus.subscribe(t, 'demo-event-log', async (e) => void events.unshift({ ...e, receivedAt: new Date().toISOString() }));
 
   const verifier = new common.JwtVerifier({ mode: 'hs256', ...JWT });
-  const cors = [`http://localhost:${PORTS.ui}`, `http://127.0.0.1:${PORTS.ui}`];
+  // The floor demo, the Next.js dashboard (3000) and the Flutter cashier app in a browser (5050).
+  const cors = [PORTS.ui, 3000, 5050].flatMap((p) => [`http://localhost:${p}`, `http://127.0.0.1:${p}`]);
 
   console.log('Starting payment service...');
   const pdb = await serviceDb('payment', join(root, 'services/payment/migrations'));
@@ -179,6 +180,17 @@ async function main() {
     console.log('Continuing with the saved demo data (run `npm run demo -- --fresh` to start over).');
   }
 
+  // Short codes and veg/non-veg for fast billing (also upgrades data saved before these existed).
+  const CODES = {
+    'Paneer Tikka': ['PT', 'VEG'], 'Chicken 65': ['C65', 'NON_VEG'], 'Veg Spring Roll': ['VSR', 'VEG'], 'Chicken Biryani': ['CB', 'NON_VEG'],
+    'Veg Biryani': ['VB', 'VEG'], 'Dal Makhani': ['DM', 'VEG'], 'Butter Chicken': ['BC', 'NON_VEG'], 'Butter Naan': ['BN', 'VEG'],
+    'Tandoori Roti': ['TR', 'VEG'], 'Sweet Lassi': ['SL', 'VEG'], 'Masala Chai': ['MC', 'VEG'], 'Gulab Jamun': ['GJ', 'VEG'],
+  };
+  for (const m of await api('GET', PORTS.order, `/menu-items?outletId=${OUTLET}`)) {
+    const c = CODES[m.name];
+    if (c && !m.shortCode) await api('PATCH', PORTS.order, `/menu-items/${m.id}`, { shortCode: c[0], foodType: c[1] });
+  }
+
   // Demo sign-in: a staff member's token carries their staff id. In production this comes from Keycloak.
   const staffToken = async (id) => {
     const member = (await api('GET', PORTS.order, `/staff?outletId=${OUTLET}`)).find((x) => x.id === id);
@@ -198,6 +210,16 @@ async function main() {
   const ui = createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://x');
+      // The Flutter app (web build) and the dashboard call the demo sign-in endpoints from other ports.
+      if (cors.includes(req.headers.origin)) res.setHeader('access-control-allow-origin', req.headers.origin);
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, { 'access-control-allow-methods': 'GET, POST', 'access-control-allow-headers': 'content-type, authorization', 'access-control-max-age': '600' });
+        return res.end();
+      }
+      if (url.pathname === '/demo/staff') {
+        const list = await api('GET', PORTS.order, `/staff?outletId=${OUTLET}`);
+        return json(res, 200, { outletId: OUTLET, outletName: 'Spice Route · Indiranagar', staff: list.map((x) => ({ id: x.id, name: x.name, role: x.role })) });
+      }
       if (req.method === 'GET' && url.pathname === '/') {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         return res.end(readFileSync(join(root, 'scripts/demo/pos.html'))); // read per request so edits show on reload
@@ -271,6 +293,12 @@ async function main() {
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
+  // Ctrl+C also stops Postgres at the same instant; connections it cuts while we shut down are expected.
+  process.on('uncaughtException', (err) => {
+    if (stopping) return;
+    console.error('Unexpected error:', err);
+    process.exit(1);
+  });
 }
 
 main().catch(async (err) => {

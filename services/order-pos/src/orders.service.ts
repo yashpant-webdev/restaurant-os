@@ -40,8 +40,26 @@ export const CreateMenuItemInput = z
     /** Recipe (food) cost per portion, for menu engineering and P&L. */
     costPaise: z.number().int().min(0).max(10_000_000).optional(),
     category: z.string().trim().min(1).max(40).optional(),
+    shortCode: z.string().trim().toUpperCase().regex(/^[A-Z0-9]{1,8}$/).optional(),
+    foodType: z.enum(['VEG', 'NON_VEG', 'EGG']).default('VEG'),
   })
   .strict();
+
+export const UpdateMenuItemInput = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    pricePaise: z.number().int().min(0).max(10_000_000),
+    gstRateBp: z.union([z.literal(0), z.literal(500), z.literal(1200), z.literal(1800), z.literal(2800)]),
+    costPaise: z.number().int().min(0).max(10_000_000).nullable(),
+    category: z.string().trim().min(1).max(40).nullable(),
+    shortCode: z.string().trim().toUpperCase().regex(/^[A-Z0-9]{1,8}$/).nullable(),
+    foodType: z.enum(['VEG', 'NON_VEG', 'EGG']),
+    isActive: z.boolean(),
+  })
+  .partial()
+  .strict();
+
+export const AvailabilityInput = z.object({ isAvailable: z.boolean() }).strict();
 
 export const AttachCustomerInput = z
   .object({
@@ -147,6 +165,10 @@ export function financialYear(d: Date): string {
 }
 
 const itemsText = (lines: PricedLine[]) => lines.map((l) => `${l.quantity}× ${l.item.name}`).join(', ');
+const dupShortCode = (err: unknown): never => {
+  if ((err as { constraint?: string }).constraint === 'menu_items_short_code_uq') throw new ConflictError('SHORT_CODE_TAKEN', 'Another item already uses this short code');
+  throw err;
+};
 const hashOf = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
 
 @Injectable()
@@ -165,23 +187,67 @@ export class OrdersService {
     const id = newId();
     await this.db.tx(
       (tx) =>
-        tx.query(`INSERT INTO menu_items (id, tenant_id, outlet_id, name, price_paise, gst_rate_bp, cost_paise, category) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, [
-          id, p.tenantId, input.outletId, input.name, input.pricePaise, input.gstRateBp, input.costPaise ?? null, input.category ?? null,
-        ]),
+        tx.query(
+          `INSERT INTO menu_items (id, tenant_id, outlet_id, name, price_paise, gst_rate_bp, cost_paise, category, short_code, food_type)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [id, p.tenantId, input.outletId, input.name, input.pricePaise, input.gstRateBp, input.costPaise ?? null, input.category ?? null, input.shortCode ?? null, input.foodType],
+        ),
       { tenantId: p.tenantId },
-    );
-    return { id, ...input };
+    ).catch(dupShortCode);
+    return { id, ...input, isAvailable: true };
   }
 
-  async listMenu(p: Principal, outletId: string) {
+  /** Dashboard edit. Old bills keep their own copy of name and price, so history never changes. */
+  async updateMenuItem(p: Principal, id: string, input: z.infer<typeof UpdateMenuItemInput>) {
+    const cols: Record<string, string> = {
+      name: 'name', pricePaise: 'price_paise', gstRateBp: 'gst_rate_bp', costPaise: 'cost_paise',
+      category: 'category', shortCode: 'short_code', foodType: 'food_type', isActive: 'is_active',
+    };
+    const sets: string[] = [];
+    const vals: unknown[] = [id];
+    for (const [k, v] of Object.entries(input)) {
+      vals.push(v);
+      sets.push(`${cols[k]} = $${vals.length}`);
+    }
+    if (!sets.length) throw new ValidationError('Nothing to update');
+    const row = await this.db.tx(
+      async (tx) => {
+        const { rows } = await tx.query<{ outlet_id: string }>(`UPDATE menu_items SET ${sets.join(', ')}, updated_at = now() WHERE id = $1 RETURNING outlet_id`, vals);
+        if (!rows[0]) throw new NotFoundError('Menu item');
+        assertOutletAccess(p, rows[0].outlet_id);
+        return rows[0];
+      },
+      { tenantId: p.tenantId },
+    ).catch(dupShortCode);
+    return (await this.listMenu(p, row.outlet_id, true)).find((m) => (m as { id: string }).id === id);
+  }
+
+  /** Sold out / back in stock. Cashiers can do this from the billing screen. */
+  async setAvailability(p: Principal, id: string, isAvailable: boolean) {
+    return this.db.tx(
+      async (tx) => {
+        const { rows } = await tx.query<{ outlet_id: string; name: string }>(
+          'UPDATE menu_items SET is_available = $2, updated_at = now() WHERE id = $1 AND is_active RETURNING outlet_id, name',
+          [id, isAvailable],
+        );
+        if (!rows[0]) throw new NotFoundError('Menu item');
+        assertOutletAccess(p, rows[0].outlet_id);
+        return { id, name: rows[0].name, isAvailable };
+      },
+      { tenantId: p.tenantId },
+    );
+  }
+
+  async listMenu(p: Principal, outletId: string, includeInactive = false) {
     assertOutletAccess(p, outletId);
     return this.db.tx(
       async (tx) =>
         (
           await tx.query(
-            `SELECT id, outlet_id AS "outletId", name, price_paise AS "pricePaise", gst_rate_bp AS "gstRateBp", cost_paise AS "costPaise", category
-               FROM menu_items WHERE outlet_id = $1 AND is_active ORDER BY category NULLS LAST, name`,
-            [outletId],
+            `SELECT id, outlet_id AS "outletId", name, price_paise AS "pricePaise", gst_rate_bp AS "gstRateBp", cost_paise AS "costPaise", category,
+                    short_code AS "shortCode", food_type AS "foodType", is_available AS "isAvailable", is_active AS "isActive", updated_at AS "updatedAt"
+               FROM menu_items WHERE outlet_id = $1 AND ($2 OR is_active) ORDER BY category NULLS LAST, sort_order, name`,
+            [outletId, includeInactive],
           )
         ).rows,
       { tenantId: p.tenantId },
@@ -344,12 +410,12 @@ export class OrdersService {
   private async priceLines(tx: Tx, outletId: string, lines: { itemId: string; quantity: number }[]): Promise<PricedLine[]> {
     const ids = [...new Set(lines.map((l) => l.itemId))];
     const { rows: items } = await tx.query<{ id: string; name: string; price_paise: number; gst_rate_bp: number; cost_paise: number | null }>(
-      `SELECT id, name, price_paise, gst_rate_bp, cost_paise FROM menu_items WHERE id = ANY($1::uuid[]) AND outlet_id = $2 AND is_active`,
+      `SELECT id, name, price_paise, gst_rate_bp, cost_paise FROM menu_items WHERE id = ANY($1::uuid[]) AND outlet_id = $2 AND is_active AND is_available`,
       [ids, outletId],
     );
     const byId = new Map(items.map((i) => [i.id, i]));
     const missing = ids.filter((i) => !byId.has(i));
-    if (missing.length) throw new ValidationError('Unknown or inactive menu items', { itemIds: missing });
+    if (missing.length) throw new ValidationError('Some items are sold out or no longer on the menu', { itemIds: missing });
     return lines.map((l) => {
       const item = byId.get(l.itemId)!;
       const lineSubtotal = safeMultiply(item.price_paise, l.quantity);

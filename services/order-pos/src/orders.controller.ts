@@ -1,8 +1,8 @@
-import { Body, Controller, Delete, Get, Headers, HttpCode, Inject, Param, ParseUUIDPipe, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, HttpCode, Inject, Param, ParseUUIDPipe, Patch, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { CurrentPrincipal, Database, Principal, Public, Roles, ZodPipe } from '@ros/common';
 import { CreateStaffInput, StaffService } from './staff';
-import { AddItemsInput, AssignCaptainInput, AttachCustomerInput, APP_DB, CheckoutInput, CreateMenuItemInput, CreateOrderInput, CreateTableInput, OrdersService } from './orders.service';
+import { AddItemsInput, AssignCaptainInput, AvailabilityInput, UpdateMenuItemInput, AttachCustomerInput, APP_DB, CheckoutInput, CreateMenuItemInput, CreateOrderInput, CreateTableInput, OrdersService } from './orders.service';
 
 @Controller()
 export class OrdersController {
@@ -16,8 +16,21 @@ export class OrdersController {
 
   @Get('menu-items')
   @Roles('owner', 'manager', 'cashier', 'captain')
-  listMenu(@CurrentPrincipal() p: Principal, @Query('outletId', new ParseUUIDPipe()) outletId: string) {
-    return this.orders.listMenu(p, outletId);
+  listMenu(@CurrentPrincipal() p: Principal, @Query('outletId', new ParseUUIDPipe()) outletId: string, @Query('includeInactive') inactive?: string) {
+    return this.orders.listMenu(p, outletId, inactive === 'true' && p.roles.some((r) => r === 'owner' || r === 'manager'));
+  }
+
+  @Patch('menu-items/:id')
+  @Roles('owner', 'manager')
+  updateMenuItem(@CurrentPrincipal() p: Principal, @Param('id', new ParseUUIDPipe()) id: string, @Body(new ZodPipe(UpdateMenuItemInput)) body: typeof UpdateMenuItemInput._type) {
+    return this.orders.updateMenuItem(p, id, body);
+  }
+
+  @Post('menu-items/:id/availability')
+  @HttpCode(200)
+  @Roles('owner', 'manager', 'cashier')
+  setAvailability(@CurrentPrincipal() p: Principal, @Param('id', new ParseUUIDPipe()) id: string, @Body(new ZodPipe(AvailabilityInput)) body: typeof AvailabilityInput._type) {
+    return this.orders.setAvailability(p, id, body.isAvailable);
   }
 
   @Post('tables')
