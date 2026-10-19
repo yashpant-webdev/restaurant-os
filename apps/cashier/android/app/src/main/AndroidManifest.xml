@@ -1,6 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Talks to the Restaurant OS backend. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Demo backend runs on plain http on the local network; production uses https only. -->
     <application
-        android:label="cashier"
+        android:usesCleartextTraffic="true"
+        android:label="Restaurant OS Cashier"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
