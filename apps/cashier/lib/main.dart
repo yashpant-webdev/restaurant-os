@@ -5,6 +5,7 @@ import 'app_state.dart';
 import 'screens/home.dart';
 import 'screens/login.dart';
 import 'screens/shift.dart';
+import 'theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -16,16 +17,12 @@ class CashierApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    ThemeData theme(Brightness b) => ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFE8590C), brightness: b),
-          useMaterial3: true,
-          visualDensity: VisualDensity.standard,
-        );
     return MaterialApp(
       title: 'Restaurant OS Cashier',
       debugShowCheckedModeBanner: false,
-      theme: theme(Brightness.light),
-      darkTheme: theme(Brightness.dark),
+      theme: sageTheme(Brightness.light),
+      darkTheme: sageTheme(Brightness.dark),
+      themeMode: ThemeMode.light, // the reference design is light; dark stays available as a setting
       home: const _Gate(),
     );
   }

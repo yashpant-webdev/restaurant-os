@@ -6,6 +6,7 @@ import '../app_state.dart';
 import '../data/api.dart';
 import '../data/models.dart';
 import '../money.dart';
+import '../theme.dart';
 import '../widgets/common.dart';
 
 /// Punch items, send KOTs, print the bill and settle.
@@ -225,7 +226,7 @@ class _OrderScreenState extends State<OrderScreen> {
 
     final grid = GridView.builder(
       padding: const EdgeInsets.all(12),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 200, mainAxisExtent: 92, crossAxisSpacing: 10, mainAxisSpacing: 10),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 210, mainAxisExtent: 100, crossAxisSpacing: 10, mainAxisSpacing: 10),
       itemCount: items.length,
       itemBuilder: (context, i) {
         final m = items[i];
@@ -233,10 +234,13 @@ class _OrderScreenState extends State<OrderScreen> {
         return Opacity(
           opacity: m.isAvailable ? 1 : 0.45,
           child: Material(
-            color: inCart > 0 ? Theme.of(context).colorScheme.primaryContainer : Theme.of(context).colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(10),
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(Sage.radiusInner + 4),
+              side: inCart > 0 ? BorderSide(color: Theme.of(context).colorScheme.onSurface, width: 1.5) : BorderSide.none,
+            ),
             child: InkWell(
-              borderRadius: BorderRadius.circular(10),
+              customBorder: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Sage.radiusInner + 4)),
               onTap: () => _add(m),
               onLongPress: () => _toggleSoldOut(m),
               child: Padding(
@@ -246,11 +250,11 @@ class _OrderScreenState extends State<OrderScreen> {
                     FoodMark(m.foodType),
                     const SizedBox(width: 6),
                     Expanded(child: Text(m.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700))),
-                    if (inCart > 0) CircleAvatar(radius: 11, child: Text('$inCart', style: const TextStyle(fontSize: 12))),
+                    if (inCart > 0) CircleAvatar(radius: 12, backgroundColor: Theme.of(context).colorScheme.primary, child: Text('$inCart', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Theme.of(context).colorScheme.onPrimary))),
                   ]),
                   const Spacer(),
                   Row(children: [
-                    Text(inr(m.pricePaise)),
+                    Text(inr(m.pricePaise), style: const TextStyle(fontFamily: Sage.display, fontWeight: FontWeight.w700, fontSize: 15)),
                     const Spacer(),
                     Text(m.isAvailable ? (m.shortCode ?? '') : 'SOLD OUT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: m.isAvailable ? Theme.of(context).colorScheme.outline : Colors.red)),
                   ]),
@@ -310,8 +314,15 @@ class _OrderScreenState extends State<OrderScreen> {
                     categoryList,
                     const VerticalDivider(width: 1),
                     Expanded(child: Column(children: [Padding(padding: const EdgeInsets.fromLTRB(12, 12, 12, 0), child: searchBox), Expanded(child: grid)])),
-                    const VerticalDivider(width: 1),
-                    SizedBox(width: 380, child: cartPanel()),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(4, 12, 12, 12),
+                      child: Container(
+                        width: 380,
+                        decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(Sage.radiusCard)),
+                        clipBehavior: Clip.antiAlias,
+                        child: cartPanel(),
+                      ),
+                    ),
                   ])
                 : Column(children: [
                     Padding(padding: const EdgeInsets.fromLTRB(12, 12, 12, 0), child: searchBox),
@@ -340,7 +351,10 @@ class _OrderScreenState extends State<OrderScreen> {
 
 Widget _kv(String l, String v, {bool bold = false}) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(children: [Expanded(child: Text(l, style: TextStyle(fontWeight: bold ? FontWeight.w800 : null))), Text(v, style: TextStyle(fontWeight: bold ? FontWeight.w800 : null, fontSize: bold ? 18 : null))]),
+      child: Row(children: [
+        Expanded(child: Text(l, style: TextStyle(fontWeight: bold ? FontWeight.w800 : null))),
+        Text(v, style: TextStyle(fontFamily: bold ? Sage.display : null, fontWeight: bold ? FontWeight.w700 : null, fontSize: bold ? 22 : null)),
+      ]),
     );
 
 class _CartPanel extends StatelessWidget {
@@ -412,11 +426,11 @@ class _CartPanel extends StatelessWidget {
           ]),
           const SizedBox(height: 8),
           if (onKotAndSettle != null && cart.isNotEmpty)
-            SizedBox(width: double.infinity, child: FilledButton.tonalIcon(onPressed: busy ? null : onKotAndSettle, icon: const Icon(Icons.bolt), label: const Text('KOT & settle')))
+            SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: busy ? null : onKotAndSettle, icon: const Icon(Icons.bolt), label: const Text('KOT & settle')))
           else
             SizedBox(
               width: double.infinity,
-              child: FilledButton.tonalIcon(onPressed: o == null || cart.isNotEmpty || o.status != 'OPEN' ? null : onSettle, icon: const Icon(Icons.payments), label: const Text('Settle')),
+              child: FilledButton.icon(onPressed: o == null || cart.isNotEmpty || o.status != 'OPEN' ? null : onSettle, icon: const Icon(Icons.payments), label: const Text('Settle')),
             ),
           if (cart.isNotEmpty && o != null) Padding(padding: const EdgeInsets.only(top: 6), child: Text('Send the new items to the kitchen before billing.', style: Theme.of(context).textTheme.bodySmall)),
         ]),

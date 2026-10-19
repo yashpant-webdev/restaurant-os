@@ -41,13 +41,16 @@ class FoodMark extends StatelessWidget {
   }
 }
 
-({Color bg, Color fg, String label}) tableStyle(BuildContext context, String status) {
+/// Table tile look, in the same language as the reference: free tables are plain
+/// inner panels; a running table gets the thin dark outline; a table waiting for
+/// its bill is solid black (it needs the cashier); paying is outlined + inverted label.
+({Color bg, Color fg, String label, Color? border}) tableStyle(BuildContext context, String status) {
   final cs = Theme.of(context).colorScheme;
   return switch (status) {
-    'OCCUPIED' => (bg: Colors.blue.withValues(alpha: 0.15), fg: Colors.blue.shade300, label: 'Running'),
-    'BILL_REQUESTED' => (bg: Colors.orange.withValues(alpha: 0.18), fg: Colors.orange.shade300, label: 'Bill asked'),
-    'PAYING' => (bg: Colors.purple.withValues(alpha: 0.18), fg: Colors.purple.shade200, label: 'Paying'),
-    _ => (bg: cs.surfaceContainerHighest, fg: cs.onSurfaceVariant, label: 'Free'),
+    'OCCUPIED' => (bg: cs.surfaceContainerLow, fg: cs.onSurface, label: 'Running', border: cs.onSurface),
+    'BILL_REQUESTED' => (bg: cs.primary, fg: cs.onPrimary, label: 'Bill asked', border: cs.primary),
+    'PAYING' => (bg: cs.surfaceContainerHighest, fg: cs.onSurface, label: 'Paying', border: cs.onSurface),
+    _ => (bg: cs.surfaceContainerLow, fg: cs.onSurfaceVariant, label: 'Free', border: null),
   };
 }
 

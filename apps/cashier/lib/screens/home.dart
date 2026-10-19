@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../app_state.dart';
 import '../money.dart';
+import '../theme.dart';
 import '../widgets/common.dart';
 import 'order.dart';
 import 'settings.dart';
@@ -89,7 +90,7 @@ class TablesView extends StatelessWidget {
         GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 190, mainAxisExtent: 128, crossAxisSpacing: 12, mainAxisSpacing: 12),
+          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 200, mainAxisExtent: 136, crossAxisSpacing: 12, mainAxisSpacing: 12),
           itemCount: tables.length,
           itemBuilder: (context, i) {
             final t = tables[i];
@@ -97,15 +98,15 @@ class TablesView extends StatelessWidget {
             final mins = t.openedAt == null ? null : DateTime.now().difference(t.openedAt!).inMinutes;
             return Material(
               color: st.bg,
-              borderRadius: BorderRadius.circular(12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Sage.radiusInner + 4), side: st.border == null ? BorderSide.none : BorderSide(color: st.border!, width: 1.5)),
               child: InkWell(
-                borderRadius: BorderRadius.circular(12),
+                customBorder: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Sage.radiusInner + 4)),
                 onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => OrderScreen(channel: 'DINE_IN', tableRef: t.label, orderId: t.orderId, seats: t.seats))),
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Row(children: [
-                      Text(t.label, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+                      Text(t.label, style: Theme.of(context).textTheme.titleLarge?.copyWith(color: st.fg)),
                       const Spacer(),
                       if (t.pendingSync) const Tooltip(message: 'Saved on this device, waiting to sync', child: Icon(Icons.sync, size: 16)),
                       Text(st.label, style: TextStyle(color: st.fg, fontWeight: FontWeight.w700, fontSize: 12)),
@@ -114,9 +115,9 @@ class TablesView extends StatelessWidget {
                     if (t.status == 'FREE')
                       Text('${t.seats} seats', style: TextStyle(color: st.fg))
                     else ...[
-                      Text(inr(t.totalPaise), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-                      Text('${t.guests ?? '–'} guests · ${mins ?? 0} min · ${t.kotCount} KOT', style: const TextStyle(fontSize: 12)),
-                      if (t.captainName != null) Text('Captain: ${t.captainName}', style: const TextStyle(fontSize: 12)),
+                      Text(inr(t.totalPaise), style: TextStyle(fontFamily: Sage.display, fontWeight: FontWeight.w700, fontSize: 18, color: st.fg)),
+                      Text('${t.guests ?? '–'} guests · ${mins ?? 0} min · ${t.kotCount} KOT', style: TextStyle(fontSize: 12, color: st.fg)),
+                      if (t.captainName != null) Text('Captain: ${t.captainName}', style: TextStyle(fontSize: 12, color: st.fg)),
                     ],
                   ]),
                 ),

@@ -1,26 +1,68 @@
 @import "tailwindcss";
 
+/*
+ * Design system (from the reference): soft sage surfaces, near-black ink,
+ * solid black pill actions, large radii, thin dark outline on the focused card,
+ * wide geometric display type (Syne) for headings and numbers, Manrope for text.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #e8efe5;          /* page */
+  --panel: #b3d8ad;       /* card (sage) */
+  --panel-2: #c6e3c1;     /* inner panel / input */
+  --ink: #0e130e;         /* text and primary actions */
+  --muted: #3a4a39;
+  --line: rgba(14, 19, 14, 0.16);
+  --chip: rgba(255, 255, 255, 0.38);
+  --accent: #111311;      /* black pill buttons */
+  --accent-ink: #ffffff;
+  --good: #17692e;
+  --warn: #8a5a00;
+  --bad: #a52a1c;
+  --series: #0e130e;      /* charts: one ink series on sage */
 }
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* Dark variant, opt-in (the reference design is light): <html data-theme="dark"> */
+:root[data-theme="dark"] {
+  & {
+    --bg: #0d120d;
+    --panel: #1b2a1a;
+    --panel-2: #243723;
+    --ink: #e6f2e2;
+    --muted: #a7bba4;
+    --line: rgba(230, 242, 226, 0.14);
+    --chip: rgba(230, 242, 226, 0.08);
+    --accent: #b3d8ad;    /* sage pill, dark text */
+    --accent-ink: #0e130e;
+    --good: #7fd88f;
+    --warn: #f0c060;
+    --bad: #ff8a7a;
+    --series: #b3d8ad;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-chip: var(--chip);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-series: var(--series);
+  --font-sans: var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-syne), var(--font-manrope), ui-sans-serif, sans-serif;
+  --radius-card: 1.5rem;
+  --radius-inner: 1rem;
 }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+h1, h2, .display { font-family: var(--font-display); letter-spacing: -0.01em; }
+.num { font-variant-numeric: tabular-nums; }
