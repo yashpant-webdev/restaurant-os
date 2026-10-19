@@ -121,7 +121,11 @@ const save = () => { try { localStorage.setItem('owner-dash', JSON.stringify(sta
 function istDay(offset = 0) { return new Date(Date.now() + 330 * 60000 + offset * 86400000).toISOString().slice(0, 10); }
 async function get(path) {
   const q = `outletId=${cfg.outletId}&from=${istDay(-(state.days - 1))}&to=${istDay(0)}`;
-  const res = await fetch(`${cfg.analyticsUrl}${path}?${q}`, { headers: { authorization: 'Bearer ' + cfg.tokens.owner } });
+  let res = await fetch(`${cfg.analyticsUrl}${path}?${q}`, { headers: { authorization: 'Bearer ' + cfg.tokens.owner } });
+  if (res.status === 401) { // token expired: renew and retry once
+    cfg.tokens = (await (await fetch('/demo/config')).json()).tokens;
+    res = await fetch(`${cfg.analyticsUrl}${path}?${q}`, { headers: { authorization: 'Bearer ' + cfg.tokens.owner } });
+  }
   const body = await res.json();
   if (!res.ok) throw new Error(body?.error?.message || 'HTTP ' + res.status);
   return body;
@@ -257,10 +261,8 @@ const card = (title, sub, body, id = '') => `<section class="card"><h2>${title}<
 
 // ---------------- pages ----------------
 async function overview() {
-  const [d, floor] = await Promise.all([
-    get('/analytics/overview'),
-    fetch(`${cfg.orderUrl}/floor?outletId=${cfg.outletId}`, { headers: { authorization: 'Bearer ' + cfg.tokens.owner } }).then((r) => r.json()),
-  ]);
+  const d = await get('/analytics/overview'); // renews the token first if it expired
+  const floor = await fetch(`${cfg.orderUrl}/floor?outletId=${cfg.outletId}`, { headers: { authorization: 'Bearer ' + cfg.tokens.owner } }).then((r) => r.json());
   const k = d.kpis, p = d.previous;
   const open = floor.tables.filter((t) => t.order);
   const seated = open.reduce((s, t) => s + (t.order.guests ?? 0), 0);

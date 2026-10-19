@@ -174,7 +174,17 @@ async function api(base, method, path, { body, role = 'cashier', key } = {}) {
   const tok = role === 'captain' ? cap.user?.token : cfg.tokens[role];
   const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + tok };
   if (key) headers['idempotency-key'] = key;
-  const res = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  let res = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  if (res.status === 401 && !api.renewing) {
+    // Token expired: get a fresh one and retry once (a real app would use its refresh token here).
+    api.renewing = true;
+    try {
+      if (role === 'captain' && cap.user) { const t = await (await fetch('/demo/token?staffId=' + cap.user.id)).json(); cap.user.token = t.token; try { sessionStorage.setItem('captain', JSON.stringify(cap.user)); } catch {} }
+      else cfg.tokens = (await (await fetch('/demo/config')).json()).tokens;
+    } finally { api.renewing = false; }
+    headers.authorization = 'Bearer ' + (role === 'captain' ? cap.user?.token : cfg.tokens[role]);
+    res = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const e = new Error(data?.error?.message || 'HTTP ' + res.status); e.code = data?.error?.code; e.details = data?.error?.details;

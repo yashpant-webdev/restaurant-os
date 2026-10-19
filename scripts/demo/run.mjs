@@ -122,8 +122,11 @@ async function main() {
   prelay.start();
   orelay.start();
 
-  const owner = await token(['owner'], 'Owner');
-  const api = async (method, base, path, body, tok = owner) => {
+  // Tokens expire (12h). Mint them when needed instead of once at startup, so a demo
+  // left running overnight keeps working. Pages also renew theirs on a 401.
+  const ownerToken = () => token(['owner'], 'Owner');
+  const api = async (method, base, path, body, tok) => {
+    tok ??= await ownerToken();
     const res = await fetch(`http://127.0.0.1:${base}${path}`, {
       method,
       headers: { 'content-type': 'application/json', authorization: `Bearer ${tok}` },
@@ -184,7 +187,7 @@ async function main() {
     return { token: await token(roles, id), name: member.name, role: member.role };
   };
   const ashaId = (await api('GET', PORTS.order, `/staff?outletId=${OUTLET}`)).find((x) => x.role === 'CASHIER')?.id;
-  const cashier = ashaId ? (await staffToken(ashaId)).token : await token(['cashier'], 'cashier');
+  const cashierToken = async () => (ashaId ? (await staffToken(ashaId)).token : token(['cashier'], 'cashier'));
 
   const json = (res, status, body) => {
     res.writeHead(status, { 'content-type': 'application/json' });
@@ -213,7 +216,7 @@ async function main() {
       }
       if (url.pathname === '/demo/config') {
         const menu = await api('GET', PORTS.order, `/menu-items?outletId=${OUTLET}`);
-        return json(res, 200, { orderUrl: `http://localhost:${PORTS.order}`, paymentUrl: `http://localhost:${PORTS.payment}`, outletId: OUTLET, analyticsUrl: `http://localhost:${PORTS.analytics}`, outletName: 'Spice Route · Indiranagar', tokens: { owner, cashier }, menu });
+        return json(res, 200, { orderUrl: `http://localhost:${PORTS.order}`, paymentUrl: `http://localhost:${PORTS.payment}`, outletId: OUTLET, analyticsUrl: `http://localhost:${PORTS.analytics}`, outletName: 'Spice Route · Indiranagar', tokens: { owner: await ownerToken(), cashier: await cashierToken() }, menu });
       }
       if (url.pathname === '/demo/events') return json(res, 200, events.slice(0, 50));
       if (url.pathname === '/demo/audit') {
