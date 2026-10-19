@@ -90,7 +90,17 @@ async function main() {
 
   const verifier = new common.JwtVerifier({ mode: 'hs256', ...JWT });
   // The floor demo, the Next.js dashboard (3000) and the Flutter cashier app in a browser (5050).
-  const cors = [PORTS.ui, 3000, 5050].flatMap((p) => [`http://localhost:${p}`, `http://127.0.0.1:${p}`]);
+  // The floor demo (4000), the Next.js dashboard (3000) and the Flutter cashier app (5050), opened on
+  // this computer or from another device on the same private network (e.g. a Windows PC or a tablet).
+  const cors = (origin) => {
+    try {
+      const u = new URL(origin);
+      const privateHost = /^(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/.test(u.hostname);
+      return u.protocol === 'http:' && privateHost && [String(PORTS.ui), '3000', '5050'].includes(u.port);
+    } catch {
+      return false;
+    }
+  };
 
   console.log('Starting payment service...');
   const pdb = await serviceDb('payment', join(root, 'services/payment/migrations'));
@@ -211,7 +221,7 @@ async function main() {
     try {
       const url = new URL(req.url, 'http://x');
       // The Flutter app (web build) and the dashboard call the demo sign-in endpoints from other ports.
-      if (cors.includes(req.headers.origin)) res.setHeader('access-control-allow-origin', req.headers.origin);
+      if (req.headers.origin && cors(req.headers.origin)) res.setHeader('access-control-allow-origin', req.headers.origin);
       if (req.method === 'OPTIONS') {
         res.writeHead(204, { 'access-control-allow-methods': 'GET, POST', 'access-control-allow-headers': 'content-type, authorization', 'access-control-max-age': '600' });
         return res.end();
@@ -238,7 +248,9 @@ async function main() {
       }
       if (url.pathname === '/demo/config') {
         const menu = await api('GET', PORTS.order, `/menu-items?outletId=${OUTLET}`);
-        return json(res, 200, { orderUrl: `http://localhost:${PORTS.order}`, paymentUrl: `http://localhost:${PORTS.payment}`, outletId: OUTLET, analyticsUrl: `http://localhost:${PORTS.analytics}`, outletName: 'Spice Route · Indiranagar', tokens: { owner: await ownerToken(), cashier: await cashierToken() }, menu });
+        // Hand back service addresses on the same host the caller used (localhost here, the Mac's IP from another PC).
+        const h = (req.headers.host ?? 'localhost').replace(/:\d+$/, '');
+        return json(res, 200, { orderUrl: `http://${h}:${PORTS.order}`, paymentUrl: `http://${h}:${PORTS.payment}`, outletId: OUTLET, analyticsUrl: `http://${h}:${PORTS.analytics}`, outletName: 'Spice Route · Indiranagar', tokens: { owner: await ownerToken(), cashier: await cashierToken() }, menu });
       }
       if (url.pathname === '/demo/events') return json(res, 200, events.slice(0, 50));
       if (url.pathname === '/demo/audit') {

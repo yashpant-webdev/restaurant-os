@@ -13,7 +13,8 @@ export interface Config {
   tokens: { owner: string; cashier: string };
 }
 
-const DEMO_URL = process.env.NEXT_PUBLIC_DEMO_URL ?? 'http://localhost:4000';
+// Same machine the dashboard was opened from (works from another PC on the network too).
+const DEMO_URL = process.env.NEXT_PUBLIC_DEMO_URL ?? (typeof window !== 'undefined' ? `http://${window.location.hostname}:4000` : 'http://localhost:4000');
 let cfg: Promise<Config> | null = null;
 
 export function config(force = false): Promise<Config> {

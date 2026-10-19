@@ -138,7 +138,7 @@ const REQUEST_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 /** Creates a hardened Nest HTTP app: security headers, body limits, request ids, safe errors. */
 export async function createHttpApp(
   module: unknown,
-  opts: { log: Logger; corsOrigins: string[]; bodyLimit?: string },
+  opts: { log: Logger; corsOrigins: string[] | ((origin: string) => boolean); bodyLimit?: string },
 ): Promise<INestApplication> {
   const app = await NestFactory.create<NestExpressApplication>(module as never, {
     rawBody: true, // webhook signatures are computed over the exact raw bytes
@@ -149,7 +149,11 @@ export async function createHttpApp(
   app.set('trust proxy', 1); // behind the gateway/ingress, for correct client IPs in rate limiting
   app.use(helmet());
   app.useBodyParser('json', { limit: opts.bodyLimit ?? '100kb' });
-  app.enableCors({ origin: opts.corsOrigins.length ? opts.corsOrigins : false, credentials: false });
+  const allowed = opts.corsOrigins;
+  app.enableCors({
+    origin: typeof allowed === 'function' ? (o, cb) => cb(null, !!o && allowed(o)) : allowed.length ? allowed : false,
+    credentials: false,
+  });
   app.use((req: { headers: Record<string, string>; requestId?: string; method: string; originalUrl: string }, res: { setHeader(k: string, v: string): void; on(e: string, f: () => void): void; statusCode: number }, next: () => void) => {
     const incoming = req.headers['x-request-id'];
     req.requestId = incoming && REQUEST_ID_RE.test(incoming) ? incoming : randomUUID();

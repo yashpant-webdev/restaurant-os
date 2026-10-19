@@ -42,7 +42,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> init() async {
     _db = await openLocalDatabase();
-    final host = (await _kv.record('host').get(_db))?['v'] as String? ?? (kIsWeb ? 'localhost' : '10.0.2.2');
+    final host = (await _kv.record('host').get(_db))?['v'] as String? ?? (kIsWeb ? Uri.base.host : '10.0.2.2'); // in a browser: the computer that served the app
     api = Api(ServerConfig(host))..renewToken = _renewToken;
     outbox = Outbox(_db, api);
 
